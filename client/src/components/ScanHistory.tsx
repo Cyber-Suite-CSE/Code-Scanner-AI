@@ -14,7 +14,8 @@ export default function ScanHistory({ scans, currentScan, onScanSelect }: ScanHi
     event.stopPropagation();
     
     try {
-      const response = await fetch(`http://localhost:5000/api/scan/${scanId}`, {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/scan/${scanId}`, {
         method: 'DELETE',
       });
       

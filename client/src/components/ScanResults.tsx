@@ -31,7 +31,8 @@ export default function ScanResults({ scan, onScanUpdate }: ScanResultsProps) {
     // Connect to WebSocket for real-time updates
     const connectWebSocket = () => {
       try {
-        ws = new WebSocket('ws://localhost:5000');
+        const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
+        ws = new WebSocket(wsUrl);
         
         ws.onopen = () => {
           ws.send(JSON.stringify({ type: 'subscribe', scanId: scan.id }));
@@ -69,7 +70,8 @@ export default function ScanResults({ scan, onScanUpdate }: ScanResultsProps) {
     const startPolling = () => {
       pollInterval = setInterval(async () => {
         try {
-          const response = await fetch(`http://localhost:5000/api/scan/${scan.id}`);
+          const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+          const response = await fetch(`${apiUrl}/api/scan/${scan.id}`);
           const result = await response.json();
           
           if (result.success) {
@@ -98,7 +100,8 @@ export default function ScanResults({ scan, onScanUpdate }: ScanResultsProps) {
 
     const fetchReport = async (scanId: string) => {
       try {
-        const response = await fetch(`http://localhost:5000/api/scan/${scanId}/report`);
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const response = await fetch(`${apiUrl}/api/scan/${scanId}/report`);
         const result = await response.json();
         
         if (result.success) {
@@ -281,7 +284,7 @@ export default function ScanResults({ scan, onScanUpdate }: ScanResultsProps) {
           </button>
           
           <a
-            href={`http://localhost:5000/reports/${scan.reportFile}`}
+            href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/reports/${scan.reportFile}`}
             download
             className="bg-slate-600 hover:bg-slate-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
           >

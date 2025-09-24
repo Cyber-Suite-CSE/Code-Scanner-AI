@@ -52,7 +52,8 @@ export default function FileUpload({ onScanStart }: FileUploadProps) {
       const formData = new FormData();
       formData.append('codebase', file);
 
-      const response = await fetch('http://localhost:5000/api/scan', {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/scan`, {
         method: 'POST',
         body: formData,
       });
