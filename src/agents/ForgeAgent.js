@@ -1,36 +1,97 @@
 import { BaseAgent } from '../core/BaseAgent.js';
 import fs from 'fs-extra';
+import path from 'path';
 
 export class ForgeAgent extends BaseAgent {
   constructor(toolRegistry, anthropicService, options = {}) {
     super('Forge', toolRegistry, anthropicService, options);
+    
     this.suggestionTemplates = new Map();
     this.educationalContent = new Map();
-    this.codePatterns = {
+    
+    // Secure code patterns organized by language and vulnerability type
+    this.secureCodePatterns = {
       javascript: {
         'sql-injection': {
-          vulnerable: 'query = "SELECT * FROM users WHERE id = " + userId;',
-          secure: 'query = "SELECT * FROM users WHERE id = ?"; db.query(query, [userId]);',
-          explanation: 'Use parameterized queries to prevent SQL injection'
+          vulnerable: "const query = 'SELECT * FROM users WHERE id = ' + userId;",
+          secure: "const query = 'SELECT * FROM users WHERE id = ?';\ndb.query(query, [userId], callback);",
+          explanation: 'Use parameterized queries to prevent SQL injection attacks'
         },
         'xss-prevention': {
-          vulnerable: 'element.innerHTML = userInput;',
-          secure: 'element.textContent = userInput;',
-          explanation: 'Use textContent instead of innerHTML for user input'
+          vulnerable: "element.innerHTML = userInput;",
+          secure: "element.textContent = userInput;",
+          explanation: 'Use textContent instead of innerHTML to prevent XSS attacks'
+        },
+        'command-injection': {
+          vulnerable: "exec('ping -c 1 ' + host);",
+          secure: "exec('ping', ['-c', '1', host]);",
+          explanation: 'Use argument arrays instead of string concatenation for shell commands'
+        },
+        'hardcoded-secrets': {
+          vulnerable: "const apiKey = 'sk-1234567890abcdef';",
+          secure: "const apiKey = process.env.API_KEY;",
+          explanation: 'Store sensitive values in environment variables, not source code'
+        },
+        'eval-usage': {
+          vulnerable: "eval(userCode);",
+          secure: "JSON.parse(userCode); // or use Function constructor with validation",
+          explanation: 'Avoid eval() - use JSON.parse() for data or Function constructor with validation'
         }
       },
       python: {
         'sql-injection': {
           vulnerable: 'cursor.execute(f"SELECT * FROM users WHERE id = {user_id}")',
           secure: 'cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))',
-          explanation: 'Use parameterized queries instead of string formatting'
+          explanation: 'Use parameterized queries instead of string formatting in SQL'
         },
-        'command-injection': {
-          vulnerable: 'os.system(f"ls {user_dir}")',
-          secure: 'subprocess.run(["ls", user_dir], check=True)',
-          explanation: 'Use subprocess with argument lists instead of shell commands'
+        'code-injection': {
+          vulnerable: 'eval(user_input)',
+          secure: 'ast.literal_eval(user_input)  # for safe literal evaluation',
+          explanation: 'Use ast.literal_eval() for safe evaluation of Python literals'
+        },
+        'deserialization': {
+          vulnerable: 'pickle.loads(user_data)',
+          secure: 'json.loads(user_data)  # use JSON for data serialization',
+          explanation: 'Use JSON instead of pickle for data serialization to prevent code execution'
+        },
+        'path-traversal': {
+          vulnerable: 'open(base_path + user_filename)',
+          secure: 'safe_path = os.path.join(base_path, os.path.basename(user_filename))\nopen(safe_path)',
+          explanation: 'Use os.path.join() and os.path.basename() to prevent directory traversal'
+        }
+      },
+      express: {
+        'route-injection': {
+          vulnerable: 'const userId = req.params.id; // direct use',
+          secure: 'const userId = validator.escape(req.params.id);',
+          explanation: 'Validate and sanitize all request parameters before use'
+        },
+        'cors-misconfiguration': {
+          vulnerable: "app.use(cors({origin: '*', credentials: true}));",
+          secure: "app.use(cors({origin: 'https://trusted-domain.com', credentials: true}));",
+          explanation: 'Specify exact origins instead of wildcards when using credentials'
+        },
+        'middleware-bypass': {
+          vulnerable: "app.get('/admin', (req, res) => { /* no auth */ });",
+          secure: "app.get('/admin', authenticateToken, (req, res) => { /* protected */ });",
+          explanation: 'Ensure all protected routes have authentication middleware'
+        }
+      },
+      mysql: {
+        'connection-security': {
+          vulnerable: "mysql.createConnection({password: 'hardcoded123', ssl: false});",
+          secure: "mysql.createConnection({password: process.env.DB_PASSWORD, ssl: true});",
+          explanation: 'Use environment variables for credentials and enable SSL connections'
         }
       }
+    };
+
+    // Vulnerability severity impact for risk calculations
+    this.severityImpact = {
+      critical: { riskReduction: 0.9, effort: 4, priority: 1 },
+      high: { riskReduction: 0.7, effort: 3, priority: 2 },
+      medium: { riskReduction: 0.5, effort: 2, priority: 3 },
+      low: { riskReduction: 0.3, effort: 1, priority: 4 }
     };
   }
 
@@ -46,52 +107,76 @@ export class ForgeAgent extends BaseAgent {
       throw new Error('Forge Agent requires security issues from Inspector Agent');
     }
 
+    if (!techStacks || !Array.isArray(techStacks)) {
+      throw new Error('Forge Agent requires tech stacks from Sentinel Agent');
+    }
+
     this.log(`Generating secure code suggestions for ${issues.length} issues`);
 
-    const suggestionTasks = [
-      () => this.generateCodeSuggestions(issues, techStacks),
-      () => this.createConfigurationFixes(issues),
-      () => this.generateEducationalContent(issues),
-      () => this.provideBestPractices(issues, techStacks)
-    ];
+    try {
+      // Process issues in batches to avoid overwhelming the system
+      const batchSize = 10;
+      const suggestions = [];
+      const educationalContent = [];
+      const bestPractices = [];
 
-    const results = await this.parallel(suggestionTasks);
-    const suggestions = this.consolidateSuggestions(results.successful);
-    const educationalMaterial = this.generateEducationalMaterial(issues, suggestions);
+      for (let i = 0; i < issues.length; i += batchSize) {
+        const batch = issues.slice(i, i + batchSize);
+        
+        // Process each batch
+        const batchResults = await this.processBatch(batch, techStacks);
+        suggestions.push(...batchResults.suggestions);
+        educationalContent.push(...batchResults.educational);
+        bestPractices.push(...batchResults.practices);
+      }
 
-    const result = {
-      suggestions,
-      educationalMaterial,
-      statistics: {
-        totalSuggestions: suggestions.length,
-        issuesWithSuggestions: suggestions.filter(s => s.codeSuggestion).length,
-        configurationFixes: suggestions.filter(s => s.configurationType).length,
-        educationalTopics: educationalMaterial.topics.length
-      },
-      summary: this.generateSummary(suggestions, issues)
-    };
+      // Generate comprehensive educational material
+      const educationalMaterial = this.generateEducationalMaterial(issues, suggestions, techStacks);
+      
+      // Create implementation plan
+      const implementationPlan = this.generateImplementationPlan(suggestions, issues);
 
-    this.storeResult('suggestions', suggestions);
-    this.storeResult('educationalMaterial', educationalMaterial);
+      const result = {
+        suggestions,
+        educationalMaterial,
+        bestPractices,
+        implementationPlan,
+        statistics: {
+          totalSuggestions: suggestions.length,
+          criticalFixes: suggestions.filter(s => s.severity === 'critical').length,
+          highPriorityFixes: suggestions.filter(s => s.severity === 'high').length,
+          estimatedEffort: this.calculateTotalEffort(suggestions),
+          expectedRiskReduction: this.calculateTotalRiskReduction(suggestions)
+        }
+      };
 
-    this.log(`Generated ${suggestions.length} secure code suggestions`);
+      this.storeResult('suggestions', suggestions);
+      this.storeResult('educationalMaterial', educationalMaterial);
+      this.storeResult('statistics', result.statistics);
 
-    return result;
+      this.log(`Generated ${suggestions.length} secure code suggestions successfully`);
+
+      return result;
+
+    } catch (error) {
+      this.log(`Error in Forge Agent execution: ${error.message}`, 'error');
+      throw error;
+    }
   }
 
   async loadSuggestionTemplates() {
     try {
-      // Load from file if exists, otherwise use defaults
       const templatePath = './config/suggestion-templates.json';
 
       if (await fs.pathExists(templatePath)) {
         const templates = await fs.readJSON(templatePath);
         this.suggestionTemplates = new Map(Object.entries(templates));
+        this.log('Loaded custom suggestion templates');
       } else {
         this.initializeDefaultTemplates();
+        this.log('Using default suggestion templates');
       }
 
-      this.log('Suggestion templates loaded');
     } catch (error) {
       this.log(`Failed to load suggestion templates: ${error.message}`, 'warn');
       this.initializeDefaultTemplates();
@@ -99,720 +184,715 @@ export class ForgeAgent extends BaseAgent {
   }
 
   initializeDefaultTemplates() {
-    this.suggestionTemplates.set('sql-injection', {
-      title: 'Fix SQL Injection Vulnerability',
-      priority: 'critical',
-      steps: [
-        'Replace string concatenation with parameterized queries',
-        'Validate and sanitize all user inputs',
-        'Implement proper error handling',
-        'Use ORM or query builder with built-in protection'
-      ]
-    });
+    const defaultTemplates = {
+      'sql-injection': {
+        title: 'Fix SQL Injection Vulnerability',
+        priority: 'critical',
+        description: 'Replace dynamic SQL construction with parameterized queries',
+        steps: [
+          'Replace string concatenation with parameterized queries',
+          'Validate and sanitize all user inputs',
+          'Implement proper error handling',
+          'Use ORM or query builder with built-in protection'
+        ]
+      },
+      'xss-prevention': {
+        title: 'Prevent Cross-Site Scripting (XSS)',
+        priority: 'high',
+        description: 'Encode output and validate input to prevent XSS attacks',
+        steps: [
+          'Encode all user data before rendering',
+          'Use safe DOM manipulation methods',
+          'Implement Content Security Policy (CSP)',
+          'Validate input on both client and server'
+        ]
+      },
+      'hardcoded-secrets': {
+        title: 'Secure Hardcoded Secrets',
+        priority: 'critical',
+        description: 'Move sensitive data to secure configuration',
+        steps: [
+          'Move secrets to environment variables',
+          'Use secure secret management service',
+          'Implement secret rotation',
+          'Remove secrets from version control history'
+        ]
+      }
+    };
 
-    this.suggestionTemplates.set('xss-prevention', {
-      title: 'Prevent Cross-Site Scripting (XSS)',
-      priority: 'high',
-      steps: [
-        'Encode all user data before rendering',
-        'Use safe DOM manipulation methods',
-        'Implement Content Security Policy (CSP)',
-        'Validate input on both client and server'
-      ]
-    });
+    this.suggestionTemplates = new Map(Object.entries(defaultTemplates));
   }
 
-  async generateCodeSuggestions(issues, techStacks) {
-    this.log('Generating code suggestions');
-
+  async processBatch(issues, techStacks) {
     const suggestions = [];
+    const educational = [];
+    const practices = [];
 
     for (const issue of issues) {
       try {
-        const suggestion = await this.createCodeSuggestion(issue, techStacks);
-
+        // Generate code suggestion
+        const suggestion = await this.createSecureSuggestion(issue, techStacks);
         if (suggestion) {
           suggestions.push(suggestion);
         }
+
+        // Generate educational content for unique issue types
+        const educationalItem = this.createEducationalItem(issue);
+        if (educationalItem) {
+          educational.push(educationalItem);
+        }
+
+        // Generate best practice recommendations
+        const practice = this.createBestPractice(issue, techStacks);
+        if (practice) {
+          practices.push(practice);
+        }
+
       } catch (error) {
-        this.log(`Failed to generate suggestion for issue ${issue.id}: ${error.message}`, 'warn');
+        this.log(`Failed to process issue ${issue.id || 'unknown'}: ${error.message}`, 'warn');
+        // Continue processing other issues instead of failing completely
+        continue;
       }
     }
 
-    return { type: 'code-suggestions', suggestions };
+    return { suggestions, educational, practices };
   }
 
-  async createCodeSuggestion(issue, techStacks) {
-    const language = this.detectLanguageFromFile(issue.file);
-    const framework = this.detectFrameworkFromTechStacks(techStacks, language);
-
-    const suggestion = {
-      issueId: issue.id,
-      type: 'code-suggestion',
-      language,
-      framework,
-      severity: issue.severity,
-      title: `Fix ${issue.name}`,
-      description: await this.generateSuggestionDescription(issue),
-      codeSuggestion: await this.generateSecureCodeExample(issue, language),
-      rationale: this.generateRationale(issue),
-      implementationSteps: this.generateImplementationSteps(issue),
-      testingGuidance: this.generateTestingGuidance(issue),
-      additionalResources: await this.getAdditionalResources(issue.type),
-      riskReduction: this.calculateRiskReduction(issue)
-    };
-
-    return suggestion;
-  }
-
-  async generateSecureCodeExample(issue, language) {
-    const patterns = this.codePatterns[language];
-
-    if (patterns && patterns[issue.type]) {
-      const pattern = patterns[issue.type];
-
-      return {
-        original: issue.lineContent,
-        vulnerable: pattern.vulnerable,
-        secure: pattern.secure,
-        explanation: pattern.explanation,
-        diff: this.generateCodeDiff(issue.lineContent, pattern.secure)
+  async createSecureSuggestion(issue, techStacks) {
+    try {
+      // Determine the appropriate language/framework context
+      const language = this.detectLanguageFromIssue(issue);
+      const framework = this.detectFrameworkFromIssue(issue, techStacks);
+      
+      // Get secure code pattern
+      const codePattern = this.getSecureCodePattern(issue.type, language, framework);
+      
+      // Create comprehensive suggestion
+      const suggestion = {
+        id: `suggestion_${issue.id || Date.now()}`,
+        issueId: issue.id,
+        type: 'code-suggestion',
+        language,
+        framework,
+        severity: issue.severity,
+        title: `Fix ${this.formatIssueType(issue.type)}`,
+        description: this.generateSuggestionDescription(issue),
+        
+        // Code examples
+        codeExample: codePattern ? {
+          original: issue.lineContent || 'Original vulnerable code',
+          vulnerable: codePattern.vulnerable,
+          secure: codePattern.secure,
+          explanation: codePattern.explanation
+        } : null,
+        
+        // Implementation guidance
+        implementationSteps: this.generateImplementationSteps(issue),
+        testingGuidance: this.generateTestingGuidance(issue),
+        
+        // Risk and effort assessment
+        riskReduction: this.calculateRiskReduction(issue.severity),
+        estimatedEffort: this.estimateImplementationEffort(issue),
+        
+        // Additional information
+        relatedCWE: issue.cwe || 'CWE-20',
+        owaspCategory: issue.owasp || 'A06:2021 – Vulnerable and Outdated Components',
+        
+        // File and location context
+        file: issue.file,
+        line: issue.line,
+        confidence: issue.confidence || 0.8
       };
+
+      return suggestion;
+
+    } catch (error) {
+      this.log(`Error creating suggestion for issue ${issue.id}: ${error.message}`, 'warn');
+      return null;
+    }
+  }
+
+  detectLanguageFromIssue(issue) {
+    // Try to get language from issue first
+    if (issue.language) {
+      return issue.language;
     }
 
-    // Generate generic suggestion based on issue type
-    return this.generateGenericCodeSuggestion(issue, language);
+    // Fallback to file extension detection
+    if (issue.file) {
+      const ext = path.extname(issue.file).toLowerCase();
+      const langMap = {
+        '.js': 'javascript',
+        '.jsx': 'javascript',
+        '.mjs': 'javascript',
+        '.ts': 'typescript',
+        '.tsx': 'typescript',
+        '.py': 'python',
+        '.pyw': 'python',
+        '.java': 'java',
+        '.cs': 'csharp',
+        '.php': 'php',
+        '.go': 'go',
+        '.rs': 'rust',
+        '.rb': 'ruby'
+      };
+      return langMap[ext] || 'unknown';
+    }
+
+    return 'unknown';
   }
 
-  generateGenericCodeSuggestion(issue, language) {
-    const suggestions = {
-      'hardcoded-secret': {
-        secure: this.generateEnvironmentVariableSuggestion(issue.matchedText, language),
-        explanation: 'Move sensitive data to environment variables or secure configuration'
-      },
-      'eval-usage': {
-        secure: this.generateSafeAlternativeToEval(issue.matchedText, language),
-        explanation: 'Replace eval() with safer alternatives like JSON.parse() or Function constructor'
-      },
-      'path-traversal': {
-        secure: this.generateSafePathHandling(issue.matchedText, language),
-        explanation: 'Validate and sanitize file paths to prevent directory traversal'
-      }
-    };
-
-    const suggestion = suggestions[issue.type];
-
-    if (suggestion) {
-      return {
-        original: issue.lineContent,
-        secure: suggestion.secure,
-        explanation: suggestion.explanation,
-        diff: this.generateCodeDiff(issue.lineContent, suggestion.secure)
-      };
+  detectFrameworkFromIssue(issue, techStacks) {
+    const language = this.detectLanguageFromIssue(issue);
+    
+    // Find the tech stack for this language
+    const techStack = techStacks.find(stack => stack.language === language);
+    
+    if (techStack && techStack.frameworks && techStack.frameworks.length > 0) {
+      return techStack.frameworks[0].name;
     }
 
     return null;
   }
 
-  generateEnvironmentVariableSuggestion(matchedText, language) {
-    const envVarName = this.extractVariableName(matchedText);
-
-    const suggestions = {
-      javascript: `const ${envVarName} = process.env.${envVarName.toUpperCase()};`,
-      python: `${envVarName} = os.environ.get('${envVarName.upper()}')`,
-      java: `String ${envVarName} = System.getenv("${envVarName.toUpperCase()}");`,
-      csharp: `string ${envVarName} = Environment.GetEnvironmentVariable("${envVarName.ToUpper()}");`
-    };
-
-    return suggestions[language] || `// Move ${envVarName} to environment variable`;
-  }
-
-  generateSafeAlternativeToEval(matchedText, language) {
-    if (language === 'javascript') {
-      if (matchedText.includes('JSON') || matchedText.includes('{')) {
-        return 'JSON.parse(sanitizedInput)';
-      }
-      return 'new Function("return " + sanitizedInput)()';
+  getSecureCodePattern(issueType, language, framework) {
+    // Try framework-specific pattern first
+    if (framework && this.secureCodePatterns[framework] && this.secureCodePatterns[framework][issueType]) {
+      return this.secureCodePatterns[framework][issueType];
     }
 
-    return `// Replace eval with safe parsing for ${language}`;
-  }
-
-  generateSafePathHandling(matchedText, language) {
-    const suggestions = {
-      javascript: 'path.join(baseDir, path.normalize(userPath))',
-      python: 'os.path.join(base_dir, os.path.normpath(user_path))',
-      java: 'Paths.get(baseDir, userPath).normalize()',
-      csharp: 'Path.Combine(baseDir, Path.GetFileName(userPath))'
-    };
-
-    return suggestions[language] || '// Implement safe path handling';
-  }
-
-  async createConfigurationFixes(issues) {
-    this.log('Creating configuration fixes');
-
-    const configFixes = [];
-
-    const configIssues = issues.filter(issue => issue.isConfiguration);
-
-    for (const issue of configIssues) {
-      try {
-        const fix = await this.generateConfigurationFix(issue);
-
-        if (fix) {
-          configFixes.push(fix);
-        }
-      } catch (error) {
-        this.log(`Failed to generate config fix for ${issue.id}: ${error.message}`, 'warn');
-      }
+    // Try language-specific pattern
+    if (this.secureCodePatterns[language] && this.secureCodePatterns[language][issueType]) {
+      return this.secureCodePatterns[language][issueType];
     }
 
-    return { type: 'configuration-fixes', suggestions: configFixes };
+    // Return generic pattern if available
+    return this.generateGenericSecurePattern(issueType, language);
   }
 
-  async generateConfigurationFix(issue) {
-    const configurationType = this.detectConfigurationType(issue.file);
-
-    const fix = {
-      issueId: issue.id,
-      type: 'configuration-fix',
-      configurationType,
-      title: `Fix ${issue.name} in configuration`,
-      description: `Update ${issue.file} to address ${issue.type}`,
-      configurationChanges: this.generateConfigChanges(issue, configurationType),
-      explanation: this.generateConfigurationExplanation(issue),
-      validationSteps: this.generateConfigValidationSteps(configurationType)
-    };
-
-    return fix;
-  }
-
-  generateConfigChanges(issue, configurationType) {
-    const changes = {
-      'package.json': {
-        'vulnerable-dependency': {
-          action: 'update',
-          field: 'dependencies',
-          change: `Update ${issue.package} to latest secure version`
-        }
+  generateGenericSecurePattern(issueType, language) {
+    const genericPatterns = {
+      'hardcoded-secrets': {
+        vulnerable: 'const secret = "hardcoded_value";',
+        secure: this.getEnvironmentVariablePattern(language, 'SECRET'),
+        explanation: 'Store sensitive values in environment variables or secure configuration'
       },
-      'docker': {
-        'privilege-escalation': {
-          action: 'add',
-          field: 'USER',
-          change: 'USER non-root-user'
-        }
+      'path-traversal': {
+        vulnerable: 'const filePath = baseDir + userInput;',
+        secure: this.getSafePathPattern(language),
+        explanation: 'Validate and sanitize file paths to prevent directory traversal'
       },
-      'web.config': {
-        'information-disclosure': {
-          action: 'add',
-          field: 'httpErrors',
-          change: '<httpErrors errorMode="Custom" />'
-        }
+      'input-validation': {
+        vulnerable: 'const userInput = request.params.input;',
+        secure: this.getInputValidationPattern(language),
+        explanation: 'Always validate and sanitize user input before processing'
       }
     };
 
-    return changes[configurationType]?.[issue.type] || {
-      action: 'manual',
-      change: 'Review and update configuration manually'
+    return genericPatterns[issueType] || null;
+  }
+
+  getEnvironmentVariablePattern(language, varName) {
+    const patterns = {
+      javascript: `const ${varName.toLowerCase()} = process.env.${varName};`,
+      python: `${varName.lower()} = os.environ.get('${varName}')`,
+      java: `String ${varName.toLowerCase()} = System.getenv("${varName}");`,
+      csharp: `string ${varName.toLowerCase()} = Environment.GetEnvironmentVariable("${varName}");`,
+      go: `${varName.toLowerCase()} := os.Getenv("${varName}")`,
+      php: `$${varName.toLowerCase()} = $_ENV['${varName}'];`
+    };
+
+    return patterns[language] || `// Use environment variable for ${varName}`;
+  }
+
+  getSafePathPattern(language) {
+    const patterns = {
+      javascript: 'const safePath = path.join(baseDir, path.basename(userInput));',
+      python: 'safe_path = os.path.join(base_dir, os.path.basename(user_input))',
+      java: 'Path safePath = Paths.get(baseDir).resolve(Paths.get(userInput).getFileName());',
+      csharp: 'string safePath = Path.Combine(baseDir, Path.GetFileName(userInput));',
+      go: 'safePath := filepath.Join(baseDir, filepath.Base(userInput))',
+      php: '$safePath = $baseDir . DIRECTORY_SEPARATOR . basename($userInput);'
+    };
+
+    return patterns[language] || '// Implement safe path handling';
+  }
+
+  getInputValidationPattern(language) {
+    const patterns = {
+      javascript: 'const validInput = validator.escape(validator.trim(userInput));',
+      python: 'valid_input = html.escape(user_input.strip())',
+      java: 'String validInput = StringEscapeUtils.escapeHtml4(userInput.trim());',
+      csharp: 'string validInput = HttpUtility.HtmlEncode(userInput.Trim());',
+      go: 'validInput := html.EscapeString(strings.TrimSpace(userInput))',
+      php: '$validInput = htmlspecialchars(trim($userInput), ENT_QUOTES, \'UTF-8\');'
+    };
+
+    return patterns[language] || '// Validate and sanitize input';
+  }
+
+  createEducationalItem(issue) {
+    return {
+      id: `education_${issue.type}`,
+      type: 'educational-content',
+      topic: issue.type,
+      title: this.formatIssueType(issue.type),
+      severity: issue.severity,
+      description: this.getEducationalDescription(issue.type),
+      prevention: this.getPreventionStrategies(issue.type),
+      examples: this.getVulnerabilityExamples(issue.type),
+      resources: this.getEducationalResources(issue.type)
     };
   }
 
-  async generateEducationalContent(issues) {
-    this.log('Generating educational content');
+  createBestPractice(issue, techStacks) {
+    const language = this.detectLanguageFromIssue(issue);
+    
+    return {
+      id: `practice_${issue.type}_${language}`,
+      type: 'best-practice',
+      category: this.mapIssueToCategory(issue.type),
+      language,
+      title: this.getBestPracticeTitle(issue.type, language),
+      description: this.getBestPracticeDescription(issue.type, language),
+      implementation: this.getBestPracticeImplementation(issue.type, language),
+      priority: this.mapSeverityToPriority(issue.severity)
+    };
+  }
 
-    const content = [];
-
+  generateEducationalMaterial(issues, suggestions, techStacks) {
     const uniqueIssueTypes = [...new Set(issues.map(issue => issue.type))];
-
-    for (const issueType of uniqueIssueTypes) {
-      try {
-        const educational = await this.createEducationalContent(issueType, issues);
-        content.push(educational);
-      } catch (error) {
-        this.log(`Failed to generate educational content for ${issueType}: ${error.message}`, 'warn');
-      }
-    }
-
-    return { type: 'educational-content', content };
-  }
-
-  async createEducationalContent(issueType, relatedIssues) {
-    const issueCount = relatedIssues.filter(issue => issue.type === issueType).length;
-
-    const content = {
-      topic: issueType,
-      title: this.getEducationalTitle(issueType),
-      occurrences: issueCount,
-      severity: this.getHighestSeverity(relatedIssues.filter(i => i.type === issueType)),
-      explanation: await this.generateDetailedExplanation(issueType),
-      examples: this.getVulnerabilityExamples(issueType),
-      prevention: this.getPreventionStrategies(issueType),
-      tools: this.getRecommendedTools(issueType),
-      references: await this.getExternalReferences(issueType)
-    };
-
-    return content;
-  }
-
-  async provideBestPractices(issues, techStacks) {
-    this.log('Providing security best practices');
-
-    const practices = [];
-
-    // General security practices
-    practices.push(...this.getGeneralSecurityPractices());
-
-    // Language-specific practices
-    for (const stack of techStacks) {
-      practices.push(...this.getLanguageSpecificPractices(stack.language));
-
-      for (const framework of stack.frameworks) {
-        practices.push(...this.getFrameworkSpecificPractices(framework.name));
-      }
-    }
-
-    return { type: 'best-practices', practices };
-  }
-
-  getGeneralSecurityPractices() {
-    return [
-      {
-        category: 'Input Validation',
-        title: 'Validate All Input',
-        description: 'Never trust user input. Validate, sanitize, and encode all data.',
-        implementation: 'Implement input validation at application boundaries',
-        priority: 'high'
-      },
-      {
-        category: 'Authentication',
-        title: 'Strong Authentication',
-        description: 'Use multi-factor authentication and strong password policies.',
-        implementation: 'Implement MFA and password complexity requirements',
-        priority: 'high'
-      },
-      {
-        category: 'Secrets Management',
-        title: 'Secure Secrets',
-        description: 'Never hardcode secrets. Use secure storage and rotation.',
-        implementation: 'Use environment variables and secret management services',
-        priority: 'critical'
-      }
-    ];
-  }
-
-  getLanguageSpecificPractices(language) {
-    const practices = {
-      javascript: [
-        {
-          category: 'XSS Prevention',
-          title: 'Safe DOM Manipulation',
-          description: 'Use textContent instead of innerHTML for user data',
-          implementation: 'Replace innerHTML with textContent for user input'
-        }
-      ],
-      python: [
-        {
-          category: 'SQL Security',
-          title: 'Parameterized Queries',
-          description: 'Always use parameterized queries for database operations',
-          implementation: 'Use cursor.execute with parameter tuples'
-        }
-      ]
-    };
-
-    return practices[language] || [];
-  }
-
-  getFrameworkSpecificPractices(framework) {
-    const practices = {
-      express: [
-        {
-          category: 'Middleware Security',
-          title: 'Security Middleware',
-          description: 'Use helmet.js and other security middleware',
-          implementation: 'Install and configure helmet, cors, and rate limiting'
-        }
-      ],
-      react: [
-        {
-          category: 'State Security',
-          title: 'Secure State Management',
-          description: 'Avoid storing sensitive data in component state',
-          implementation: 'Use secure storage for sensitive information'
-        }
-      ]
-    };
-
-    return practices[framework] || [];
-  }
-
-  consolidateSuggestions(results) {
-    const allSuggestions = [];
-
-    results.forEach(result => {
-      if (result.suggestions && Array.isArray(result.suggestions)) {
-        allSuggestions.push(...result.suggestions);
-      } else if (result.content && Array.isArray(result.content)) {
-        allSuggestions.push(...result.content);
-      } else if (result.practices && Array.isArray(result.practices)) {
-        allSuggestions.push(...result.practices.map(p => ({
-          ...p,
-          type: 'best-practice'
-        })));
-      }
-    });
-
-    // Sort by severity and type
-    return allSuggestions.sort((a, b) => {
-      const severityOrder = { critical: 4, high: 3, medium: 2, low: 1 };
-
-      const aSeverity = severityOrder[a.severity] || 0;
-      const bSeverity = severityOrder[b.severity] || 0;
-
-      if (aSeverity !== bSeverity) {
-        return bSeverity - aSeverity;
-      }
-
-      return a.type.localeCompare(b.type);
-    });
-  }
-
-  generateEducationalMaterial(issues, suggestions) {
-    const topics = [...new Set(issues.map(issue => issue.type))];
     const severityDistribution = this.calculateSeverityDistribution(issues);
+    const languageDistribution = this.calculateLanguageDistribution(issues);
 
     return {
       overview: {
         totalIssues: issues.length,
-        uniqueVulnerabilityTypes: topics.length,
-        severityDistribution
+        totalSuggestions: suggestions.length,
+        uniqueVulnerabilityTypes: uniqueIssueTypes.length,
+        severityDistribution,
+        languageDistribution,
+        riskLevel: this.calculateOverallRiskLevel(severityDistribution)
       },
-      topics: topics.map(topic => ({
+      topics: uniqueIssueTypes.map(topic => ({
         name: topic,
-        description: this.getEducationalTitle(topic),
+        displayName: this.formatIssueType(topic),
         issueCount: issues.filter(i => i.type === topic).length,
-        relatedSuggestions: suggestions.filter(s => s.issueId &&
-          issues.find(i => i.id === s.issueId && i.type === topic))
+        severity: this.getHighestSeverity(issues.filter(i => i.type === topic)),
+        suggestionsCount: suggestions.filter(s => s.issueId && 
+          issues.find(i => i.id === s.issueId && i.type === topic)).length
       })),
-      learningPath: this.generateLearningPath(topics),
-      resources: this.generateResourcesList(topics)
+      learningPath: this.generateLearningPath(uniqueIssueTypes, severityDistribution),
+      resources: this.generateResourcesList()
     };
   }
 
-  generateLearningPath(topics) {
-    const criticalTopics = topics.filter(topic =>
-      ['sql-injection', 'xss-prevention', 'hardcoded-secret'].includes(topic)
-    );
+  generateImplementationPlan(suggestions, issues) {
+    const criticalSuggestions = suggestions.filter(s => s.severity === 'critical');
+    const highSuggestions = suggestions.filter(s => s.severity === 'high');
+    const mediumSuggestions = suggestions.filter(s => s.severity === 'medium');
+    const lowSuggestions = suggestions.filter(s => s.severity === 'low');
 
-    return [
-      {
-        level: 'Foundation',
-        topics: ['input-validation', 'output-encoding'],
-        description: 'Learn fundamental security principles'
-      },
-      {
-        level: 'Critical Vulnerabilities',
-        topics: criticalTopics,
-        description: 'Address the most dangerous vulnerabilities first'
-      },
-      {
-        level: 'Advanced Security',
-        topics: topics.filter(t => !criticalTopics.includes(t)),
-        description: 'Implement comprehensive security measures'
-      }
-    ];
-  }
+    const phases = [];
 
-  generateResourcesList(topics) {
-    return [
-      {
-        title: 'OWASP Top 10',
-        url: 'https://owasp.org/www-project-top-ten/',
-        description: 'Most critical web application security risks'
-      },
-      {
-        title: 'Secure Coding Practices',
-        url: 'https://owasp.org/www-project-secure-coding-practices-quick-reference-guide/',
-        description: 'Quick reference for secure coding'
-      },
-      {
-        title: 'Security Testing Guide',
-        url: 'https://owasp.org/www-project-web-security-testing-guide/',
-        description: 'Comprehensive security testing methodology'
-      }
-    ];
-  }
-
-  generateSummary(suggestions, issues) {
-    const criticalFixes = suggestions.filter(s => s.severity === 'critical').length;
-    const highPriorityFixes = suggestions.filter(s => s.severity === 'high').length;
-
-    return {
-      totalSuggestions: suggestions.length,
-      criticalFixes,
-      highPriorityFixes,
-      implementationEffort: this.estimateImplementationEffort(suggestions),
-      expectedRiskReduction: this.calculateExpectedRiskReduction(suggestions),
-      nextSteps: this.generateNextSteps(criticalFixes, highPriorityFixes)
-    };
-  }
-
-  // Helper methods
-  detectLanguageFromFile(filePath) {
-    const ext = filePath.split('.').pop().toLowerCase();
-    const langMap = {
-      'js': 'javascript', 'jsx': 'javascript', 'ts': 'typescript', 'tsx': 'typescript',
-      'py': 'python', 'java': 'java', 'cs': 'csharp', 'php': 'php',
-      'go': 'go', 'rs': 'rust', 'rb': 'ruby'
-    };
-    return langMap[ext] || 'unknown';
-  }
-
-  detectFrameworkFromTechStacks(techStacks, language) {
-    const stack = techStacks.find(s => s.language === language);
-    return stack && stack.frameworks.length > 0 ? stack.frameworks[0].name : null;
-  }
-
-  detectConfigurationType(filePath) {
-    if (filePath.includes('package.json')) return 'package.json';
-    if (filePath.includes('Dockerfile')) return 'docker';
-    if (filePath.includes('web.config')) return 'web.config';
-    if (filePath.includes('.env')) return 'environment';
-    return 'unknown';
-  }
-
-  extractVariableName(text) {
-    const match = text.match(/(\w+)\s*=/);
-    return match ? match[1] : 'secretValue';
-  }
-
-  generateCodeDiff(original, suggested) {
-    return {
-      original: original.trim(),
-      suggested: suggested.trim(),
-      changes: [{
-        type: 'replacement',
-        line: 1,
-        old: original.trim(),
-        new: suggested.trim()
-      }]
-    };
-  }
-
-  getHighestSeverity(issues) {
-    const severityOrder = ['critical', 'high', 'medium', 'low'];
-    for (const severity of severityOrder) {
-      if (issues.some(issue => issue.severity === severity)) {
-        return severity;
-      }
-    }
-    return 'low';
-  }
-
-  calculateSeverityDistribution(issues) {
-    const distribution = { critical: 0, high: 0, medium: 0, low: 0 };
-    issues.forEach(issue => {
-      if (distribution.hasOwnProperty(issue.severity)) {
-        distribution[issue.severity]++;
-      }
-    });
-    return distribution;
-  }
-
-  calculateExpectedRiskReduction(suggestions) {
-    const reductionValues = { critical: 0.8, high: 0.6, medium: 0.4, low: 0.2 };
-    return suggestions.reduce((total, suggestion) => {
-      return total + (reductionValues[suggestion.severity] || 0.1);
-    }, 0);
-  }
-
-  estimateImplementationEffort(suggestions) {
-    const effortValues = {
-      'code-suggestion': 2,
-      'configuration-fix': 1,
-      'best-practice': 3
-    };
-
-    const totalHours = suggestions.reduce((total, suggestion) => {
-      return total + (effortValues[suggestion.type] || 2);
-    }, 0);
-
-    return {
-      totalHours,
-      estimatedDays: Math.ceil(totalHours / 8),
-      effort: totalHours < 8 ? 'Low' : totalHours < 24 ? 'Medium' : 'High'
-    };
-  }
-
-  generateNextSteps(criticalFixes, highPriorityFixes) {
-    const steps = [];
-
-    if (criticalFixes > 0) {
-      steps.push({
-        priority: 1,
-        action: 'Address Critical Security Issues',
-        description: `Immediately fix ${criticalFixes} critical vulnerabilities`,
-        timeframe: 'This week'
+    if (criticalSuggestions.length > 0) {
+      phases.push({
+        phase: 1,
+        name: 'Critical Security Fixes',
+        priority: 'immediate',
+        timeframe: '1-2 days',
+        suggestions: criticalSuggestions.slice(0, 5), // Top 5 critical
+        estimatedEffort: this.calculateTotalEffort(criticalSuggestions),
+        description: 'Address critical vulnerabilities that pose immediate security risks'
       });
     }
 
-    if (highPriorityFixes > 0) {
-      steps.push({
-        priority: 2,
-        action: 'Fix High Priority Issues',
-        description: `Address ${highPriorityFixes} high-severity issues`,
-        timeframe: 'Next 2 weeks'
+    if (highSuggestions.length > 0) {
+      phases.push({
+        phase: 2,
+        name: 'High Priority Security Issues',
+        priority: 'high',
+        timeframe: '1-2 weeks',
+        suggestions: highSuggestions.slice(0, 10), // Top 10 high priority
+        estimatedEffort: this.calculateTotalEffort(highSuggestions),
+        description: 'Fix high-severity vulnerabilities in current development cycle'
       });
     }
 
-    steps.push({
-      priority: 3,
-      action: 'Implement Security Review Process',
-      description: 'Establish ongoing security review practices',
-      timeframe: 'Next month'
-    });
+    if (mediumSuggestions.length > 0) {
+      phases.push({
+        phase: 3,
+        name: 'Medium Priority Improvements',
+        priority: 'medium',
+        timeframe: '2-4 weeks',
+        suggestions: mediumSuggestions.slice(0, 15),
+        estimatedEffort: this.calculateTotalEffort(mediumSuggestions),
+        description: 'Address medium-severity issues and implement security improvements'
+      });
+    }
 
-    return steps;
-  }
+    if (lowSuggestions.length > 0) {
+      phases.push({
+        phase: 4,
+        name: 'Low Priority Enhancements',
+        priority: 'low',
+        timeframe: '1-2 months',
+        suggestions: lowSuggestions,
+        estimatedEffort: this.calculateTotalEffort(lowSuggestions),
+        description: 'Complete remaining security enhancements and best practices'
+      });
+    }
 
-  // Educational content generators
-  getEducationalTitle(issueType) {
-    const titles = {
-      'sql-injection': 'Understanding SQL Injection Attacks',
-      'xss-prevention': 'Cross-Site Scripting (XSS) Prevention',
-      'hardcoded-secret': 'Secure Secrets Management',
-      'eval-usage': 'Dangers of Dynamic Code Execution',
-      'path-traversal': 'Directory Traversal Attack Prevention'
+    return {
+      phases,
+      totalEffort: this.calculateTotalEffort(suggestions),
+      estimatedDuration: this.estimateProjectDuration(phases),
+      nextSteps: this.generateNextSteps(phases)
     };
-
-    return titles[issueType] || `Security Issue: ${issueType}`;
   }
 
-  async generateDetailedExplanation(issueType) {
-    // This would ideally use the context7 tool to get detailed explanations
-    const explanations = {
-      'sql-injection': 'SQL injection occurs when untrusted data is sent to an interpreter as part of a command or query. The attacker\'s hostile data can trick the interpreter into executing unintended commands or accessing data without proper authorization.',
-      'xss-prevention': 'Cross-Site Scripting (XSS) attacks occur when an application includes untrusted data in a web page without proper validation or escaping. XSS allows attackers to execute scripts in the victim\'s browser which can hijack user sessions, deface web sites, or redirect the user to malicious sites.',
-      'hardcoded-secret': 'Hardcoded secrets in source code pose a significant security risk. Anyone with access to the code repository can potentially access sensitive systems using these credentials.'
-    };
-
-    return explanations[issueType] || `Security vulnerability of type: ${issueType}`;
+  // Helper methods for calculations and formatting
+  formatIssueType(issueType) {
+    if (!issueType || typeof issueType !== 'string') {
+      return 'Security Issue';
+    }
+    
+    return issueType
+      .split('-')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
   }
 
-  getVulnerabilityExamples(issueType) {
-    return [{
-      title: `Example of ${issueType}`,
-      vulnerable: 'Vulnerable code pattern...',
-      secure: 'Secure implementation...',
-      explanation: 'Why this is secure...'
-    }];
-  }
-
-  getPreventionStrategies(issueType) {
-    const strategies = {
-      'sql-injection': [
-        'Use parameterized queries',
-        'Implement input validation',
-        'Use stored procedures',
-        'Apply principle of least privilege'
-      ],
-      'xss-prevention': [
-        'Encode all output',
-        'Validate input',
-        'Use Content Security Policy',
-        'Sanitize HTML input'
-      ]
-    };
-
-    return strategies[issueType] || ['Follow secure coding practices'];
-  }
-
-  getRecommendedTools(issueType) {
-    return [
-      'Static Analysis Security Testing (SAST) tools',
-      'Dynamic Application Security Testing (DAST) tools',
-      'Linting tools with security rules'
-    ];
-  }
-
-  async getExternalReferences(issueType) {
-    return [
-      {
-        title: `OWASP Guide on ${issueType}`,
-        url: `https://owasp.org/`,
-        description: 'Comprehensive security guidance'
-      }
-    ];
-  }
-
-  async generateSuggestionDescription(issue) {
-    return `Address the ${issue.severity} severity ${issue.type} vulnerability found in ${issue.file} at line ${issue.line}`;
-  }
-
-  generateRationale(issue) {
-    return `This ${issue.type} vulnerability poses a ${issue.severity} risk to application security. ${issue.description}`;
+  generateSuggestionDescription(issue) {
+    const issueTypeName = this.formatIssueType(issue.type);
+    const fileName = issue.file ? path.basename(issue.file) : 'unknown file';
+    const lineInfo = issue.line ? ` at line ${issue.line}` : '';
+    
+    return `Address the ${issue.severity || 'unknown'} severity ${issueTypeName} vulnerability found in ${fileName}${lineInfo}`;
   }
 
   generateImplementationSteps(issue) {
+    const fileName = issue.file ? path.basename(issue.file) : 'the affected file';
+    const lineInfo = issue.line ? `:${issue.line}` : '';
+    
     return [
-      `Review the vulnerable code in ${issue.file}:${issue.line}`,
+      `Review the vulnerable code in ${fileName}${lineInfo}`,
       'Apply the suggested secure code pattern',
       'Test the implementation thoroughly',
-      'Review similar patterns throughout the codebase'
+      'Review similar patterns throughout the codebase',
+      'Update documentation if necessary'
     ];
   }
 
   generateTestingGuidance(issue) {
     return {
-      unitTests: 'Write unit tests to verify the fix',
+      unitTests: 'Write unit tests to verify the fix works correctly',
       integrationTests: 'Test the fix in integration environment',
-      securityTests: 'Perform security testing to validate the fix',
-      manualTesting: 'Manually verify the vulnerability is resolved'
+      securityTests: 'Perform security testing to validate vulnerability is resolved',
+      manualTesting: 'Manually verify the fix doesn\'t break existing functionality',
+      regressionTests: 'Run existing test suite to ensure no regressions'
     };
   }
 
-  async getAdditionalResources(issueType) {
+  calculateRiskReduction(severity) {
+    const impact = this.severityImpact[severity] || this.severityImpact.medium;
+    return {
+      percentage: Math.round(impact.riskReduction * 100),
+      description: `Fixing this ${severity || 'medium'} severity issue will reduce security risk by ${Math.round(impact.riskReduction * 100)}%`
+    };
+  }
+
+  estimateImplementationEffort(issue) {
+    const impact = this.severityImpact[issue.severity] || this.severityImpact.medium;
+    const baseHours = impact.effort;
+    
+    // Adjust based on issue complexity
+    let complexityMultiplier = 1;
+    if (issue.type === 'sql-injection' || issue.type === 'xss-prevention') {
+      complexityMultiplier = 1.5; // More complex fixes
+    }
+    
+    const totalHours = Math.ceil(baseHours * complexityMultiplier);
+    
+    return {
+      hours: totalHours,
+      effort: totalHours <= 2 ? 'Low' : totalHours <= 6 ? 'Medium' : 'High',
+      description: `Estimated ${totalHours} hours to implement this fix`
+    };
+  }
+
+  calculateTotalEffort(suggestions) {
+    const totalHours = suggestions.reduce((sum, suggestion) => {
+      return sum + (suggestion.estimatedEffort?.hours || 2);
+    }, 0);
+    
+    return {
+      totalHours,
+      totalDays: Math.ceil(totalHours / 8),
+      effort: totalHours <= 8 ? 'Low' : totalHours <= 24 ? 'Medium' : 'High'
+    };
+  }
+
+  calculateTotalRiskReduction(suggestions) {
+    const totalReduction = suggestions.reduce((sum, suggestion) => {
+      return sum + (suggestion.riskReduction?.percentage || 0);
+    }, 0);
+    
+    return Math.min(100, Math.round(totalReduction / suggestions.length));
+  }
+
+  calculateSeverityDistribution(issues) {
+    const distribution = { critical: 0, high: 0, medium: 0, low: 0 };
+    
+    issues.forEach(issue => {
+      if (distribution.hasOwnProperty(issue.severity)) {
+        distribution[issue.severity]++;
+      }
+    });
+    
+    return distribution;
+  }
+
+  calculateLanguageDistribution(issues) {
+    const distribution = {};
+    
+    issues.forEach(issue => {
+      const language = this.detectLanguageFromIssue(issue);
+      distribution[language] = (distribution[language] || 0) + 1;
+    });
+    
+    return distribution;
+  }
+
+  getHighestSeverity(issues) {
+    const severityOrder = ['critical', 'high', 'medium', 'low'];
+    
+    for (const severity of severityOrder) {
+      if (issues.some(issue => issue.severity === severity)) {
+        return severity;
+      }
+    }
+    
+    return 'low';
+  }
+
+  calculateOverallRiskLevel(severityDistribution) {
+    const { critical, high, medium, low } = severityDistribution;
+    
+    if (critical > 0) return 'Critical';
+    if (high > 2) return 'High';
+    if (high > 0 || medium > 5) return 'Medium';
+    return 'Low';
+  }
+
+  generateLearningPath(issueTypes, severityDistribution) {
+    const criticalTopics = issueTypes.filter(type =>
+      ['sql-injection', 'xss-prevention', 'hardcoded-secrets', 'command-injection'].includes(type)
+    );
+
+    const phases = [];
+
+    if (criticalTopics.length > 0) {
+      phases.push({
+        level: 'Critical Security Fundamentals',
+        topics: criticalTopics,
+        description: 'Learn to identify and fix the most dangerous vulnerabilities',
+        priority: 1
+      });
+    }
+
+    phases.push({
+      level: 'Security Best Practices',
+      topics: issueTypes.filter(t => !criticalTopics.includes(t)),
+      description: 'Implement comprehensive security measures and best practices',
+      priority: 2
+    });
+
+    phases.push({
+      level: 'Advanced Security',
+      topics: ['security-architecture', 'threat-modeling', 'security-testing'],
+      description: 'Advanced security concepts and practices',
+      priority: 3
+    });
+
+    return phases;
+  }
+
+  generateResourcesList() {
     return [
       {
-        type: 'documentation',
-        title: `Secure coding guidelines for ${issueType}`,
-        url: '#'
+        title: 'OWASP Top 10',
+        url: 'https://owasp.org/www-project-top-ten/',
+        description: 'Most critical web application security risks',
+        category: 'general'
       },
       {
-        type: 'tool',
-        title: 'Recommended security scanner',
-        url: '#'
+        title: 'Secure Coding Practices',
+        url: 'https://owasp.org/www-project-secure-coding-practices-quick-reference-guide/',
+        description: 'Quick reference for secure coding practices',
+        category: 'coding'
+      },
+      {
+        title: 'Security Testing Guide',
+        url: 'https://owasp.org/www-project-web-security-testing-guide/',
+        description: 'Comprehensive security testing methodology',
+        category: 'testing'
+      },
+      {
+        title: 'CWE/SANS Top 25',
+        url: 'https://cwe.mitre.org/top25/',
+        description: 'Most dangerous software weaknesses',
+        category: 'vulnerabilities'
       }
     ];
   }
 
-  calculateRiskReduction(issue) {
-    const reductionMap = {
-      critical: 0.9,
-      high: 0.7,
-      medium: 0.5,
-      low: 0.3
-    };
-
+  estimateProjectDuration(phases) {
+    const totalDays = phases.reduce((sum, phase) => {
+      return sum + (phase.estimatedEffort?.totalDays || 1);
+    }, 0);
+    
     return {
-      percentage: (reductionMap[issue.severity] || 0.5) * 100,
-      description: `Fixing this issue will significantly reduce security risk`
+      totalDays,
+      totalWeeks: Math.ceil(totalDays / 5),
+      description: `Estimated ${Math.ceil(totalDays / 5)} weeks to complete all security improvements`
     };
   }
 
-  generateConfigurationExplanation(issue) {
-    return `Configuration change required to address ${issue.type} in ${issue.file}`;
+  generateNextSteps(phases) {
+    const steps = [];
+    
+    if (phases.length > 0) {
+      const firstPhase = phases[0];
+      steps.push({
+        step: 1,
+        action: `Begin ${firstPhase.name}`,
+        description: firstPhase.description,
+        timeframe: firstPhase.timeframe,
+        priority: 'immediate'
+      });
+    }
+
+    steps.push({
+      step: 2,
+      action: 'Set up security review process',
+      description: 'Establish regular security code reviews and testing',
+      timeframe: 'This week',
+      priority: 'high'
+    });
+
+    steps.push({
+      step: 3,
+      action: 'Implement security training',
+      description: 'Provide security awareness training for development team',
+      timeframe: 'Next 2 weeks',
+      priority: 'medium'
+    });
+
+    return steps;
   }
 
-  generateConfigValidationSteps(configurationType) {
-    const steps = {
-      'package.json': ['Run npm audit', 'Test application functionality'],
-      'docker': ['Rebuild container', 'Test container security'],
-      'web.config': ['Validate XML syntax', 'Test web application']
+  // Educational content helpers
+  getEducationalDescription(issueType) {
+    const descriptions = {
+      'sql-injection': 'SQL injection occurs when untrusted data is sent to an interpreter as part of a command or query, allowing attackers to execute malicious SQL commands.',
+      'xss-prevention': 'Cross-Site Scripting (XSS) allows attackers to inject malicious scripts into web pages viewed by other users.',
+      'hardcoded-secrets': 'Hardcoded secrets in source code expose sensitive credentials to anyone with access to the code.',
+      'command-injection': 'Command injection allows attackers to execute arbitrary commands on the host operating system.',
+      'path-traversal': 'Path traversal vulnerabilities allow attackers to access files and directories outside the intended directory.'
     };
 
-    return steps[configurationType] || ['Validate configuration', 'Test application'];
+    return descriptions[issueType] || `Security vulnerability of type: ${this.formatIssueType(issueType)}`;
+  }
+
+  getPreventionStrategies(issueType) {
+    const strategies = {
+      'sql-injection': [
+        'Use parameterized queries or prepared statements',
+        'Implement input validation and sanitization',
+        'Use stored procedures with proper parameter handling',
+        'Apply principle of least privilege for database access'
+      ],
+      'xss-prevention': [
+        'Encode all output data',
+        'Validate and sanitize input data',
+        'Use Content Security Policy (CSP)',
+        'Implement proper session management'
+      ],
+      'hardcoded-secrets': [
+        'Use environment variables for configuration',
+        'Implement secure secret management systems',
+        'Enable secret rotation and monitoring',
+        'Remove secrets from version control history'
+      ]
+    };
+
+    return strategies[issueType] || ['Follow secure coding best practices'];
+  }
+
+  getVulnerabilityExamples(issueType) {
+    return [{
+      title: `Example of ${this.formatIssueType(issueType)}`,
+      description: 'Common vulnerable pattern and secure alternative',
+      vulnerable: 'Example vulnerable code...',
+      secure: 'Example secure code...',
+      explanation: 'Explanation of why the secure version is better...'
+    }];
+  }
+
+  getEducationalResources(issueType) {
+    return [
+      {
+        title: `OWASP Guide on ${this.formatIssueType(issueType)}`,
+        url: 'https://owasp.org/',
+        description: 'Comprehensive security guidance from OWASP'
+      },
+      {
+        title: 'Security Code Review Guidelines',
+        url: 'https://owasp.org/www-project-code-review-guide/',
+        description: 'Guidelines for secure code review practices'
+      }
+    ];
+  }
+
+  mapIssueToCategory(issueType) {
+    const categoryMap = {
+      'sql-injection': 'Input Validation',
+      'xss-prevention': 'Output Encoding',
+      'hardcoded-secrets': 'Secrets Management',
+      'command-injection': 'Input Validation',
+      'path-traversal': 'Access Control'
+    };
+
+    return categoryMap[issueType] || 'General Security';
+  }
+
+  getBestPracticeTitle(issueType, language) {
+    const titles = {
+      'sql-injection': `${language.charAt(0).toUpperCase() + language.slice(1)} SQL Security`,
+      'xss-prevention': `${language.charAt(0).toUpperCase() + language.slice(1)} XSS Prevention`,
+      'hardcoded-secrets': 'Secure Configuration Management'
+    };
+
+    return titles[issueType] || `${language.charAt(0).toUpperCase() + language.slice(1)} Security Best Practices`;
+  }
+
+  getBestPracticeDescription(issueType, language) {
+    return `Implement secure coding practices for ${this.formatIssueType(issueType)} in ${language} applications`;
+  }
+
+  getBestPracticeImplementation(issueType, language) {
+    return `Follow ${language}-specific security guidelines to prevent ${this.formatIssueType(issueType)} vulnerabilities`;
+  }
+
+  mapSeverityToPriority(severity) {
+    const priorityMap = {
+      critical: 'immediate',
+      high: 'high',
+      medium: 'medium',
+      low: 'low'
+    };
+
+    return priorityMap[severity] || 'medium';
   }
 }
