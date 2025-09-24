@@ -7,6 +7,7 @@ import path from 'path';
 import fs from 'fs-extra';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
+import { WorkflowOrchestrator } from './src/core/WorkflowOrchestrator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -52,6 +53,155 @@ const scans = new Map();
 const reports = new Map();
 const wsClients = new Map();
 
+// Initialize the Code Security Scanner
+class CodeSecurityScanner {
+  constructor() {
+    this.orchestrator = null;
+    this.config = {
+      configPath: './config',
+      outputPath: './output',
+      tempPath: './temp'
+    };
+  }
+
+  async initialize() {
+    try {
+      console.log('🔒 Initializing Code Security Scanner...');
+      
+      // Initialize orchestrator
+      this.orchestrator = new WorkflowOrchestrator(this.config);
+      
+      // Set up event listeners for WebSocket broadcasting
+      this.setupEventListeners();
+      
+      // Initialize
+      await this.orchestrator.initialize();
+      
+      console.log('✅ Scanner initialized successfully');
+      return true;
+    } catch (error) {
+      console.error('❌ Scanner initialization failed:', error.message);
+      return false;
+    }
+  }
+
+  setupEventListeners() {
+    this.orchestrator.on('workflow-status', (event) => {
+      console.log(`📊 Workflow Status: ${event.status}`);
+      if (event.step) {
+        console.log(`   Step: ${event.step}`);
+      }
+      // Broadcast to all connected WebSocket clients
+      this.broadcastToAllClients({
+        type: 'workflowStatus',
+        status: event.status,
+        step: event.step
+      });
+    });
+
+    this.orchestrator.on('workflow-step-start', (event) => {
+      console.log(`🚀 Starting: ${event.step}`);
+      this.broadcastToAllClients({
+        type: 'stepStart',
+        step: event.step
+      });
+    });
+
+    this.orchestrator.on('workflow-step-complete', (event) => {
+      console.log(`✅ Completed: ${event.step} (${event.duration}ms)`);
+      this.broadcastToAllClients({
+        type: 'stepComplete',
+        step: event.step,
+        duration: event.duration
+      });
+    });
+
+    this.orchestrator.on('workflow-step-error', (event) => {
+      console.error(`❌ Failed: ${event.step} - ${event.error}`);
+      this.broadcastToAllClients({
+        type: 'stepError',
+        step: event.step,
+        error: event.error
+      });
+    });
+
+    this.orchestrator.on('agent-status', (event) => {
+      console.log(`🤖 Agent ${event.agent}: ${event.status}`);
+      this.broadcastToAllClients({
+        type: 'agentStatus',
+        agent: event.agent,
+        status: event.status
+      });
+    });
+
+    this.orchestrator.on('workflow-error', (event) => {
+      console.error(`💥 Workflow Error: ${event.error}`);
+      this.broadcastToAllClients({
+        type: 'workflowError',
+        error: event.error
+      });
+    });
+  }
+
+  broadcastToAllClients(data) {
+    wsClients.forEach((client, scanId) => {
+      if (client && client.readyState === client.OPEN) {
+        client.send(JSON.stringify({
+          type: 'scanUpdate',
+          scanId,
+          data: {
+            ...data,
+            timestamp: new Date().toISOString()
+          }
+        }));
+      }
+    });
+  }
+
+  async scanCodebase(zipPath, scanId) {
+    try {
+      console.log(`🔍 Starting security scan: ${path.basename(zipPath)}`);
+      
+      // Execute scan
+      const result = await this.orchestrator.executeScan(zipPath);
+      
+      if (result.success) {
+        console.log('🎉 Security scan completed successfully!');
+        return result;
+      } else {
+        console.error('❌ Security scan failed');
+        return result;
+      }
+    } catch (error) {
+      console.error(`❌ Scan failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async healthCheck() {
+    try {
+      if (!this.orchestrator) {
+        return { status: 'uninitialized' };
+      }
+      return await this.orchestrator.healthCheck();
+    } catch (error) {
+      return {
+        status: 'unhealthy',
+        error: error.message
+      };
+    }
+  }
+
+  async cleanup() {
+    if (this.orchestrator) {
+      await this.orchestrator.cleanup();
+    }
+  }
+}
+
+// Initialize the scanner
+const scanner = new CodeSecurityScanner();
+
 // WebSocket connection handling
 wss.on('connection', (ws) => {
   console.log('WebSocket client connected');
@@ -92,193 +242,72 @@ function broadcastScanUpdate(scanId, scanData) {
   }
 }
 
-// Utility function to simulate scan progress
-function simulateScanProgress(scanId) {
+// Real scan execution function
+async function executeScan(scanId, zipFilePath) {
   const scan = scans.get(scanId);
   if (!scan) return;
 
-  const steps = [
-    'Extracting files...',
-    'Analyzing code structure...',
-    'Running security checks...',
-    'Generating vulnerability report...',
-    'Finalizing analysis...'
-  ];
+  try {
+    // Update scan status
+    scan.status = 'scanning';
+    scan.currentStep = 'Initializing scan...';
+    scans.set(scanId, scan);
+    broadcastScanUpdate(scanId, scan);
 
-  let currentStepIndex = 0;
-  let progress = 0;
+    // Execute the real scan using the scanner
+    const result = await scanner.scanCodebase(zipFilePath, scanId);
 
-  const progressInterval = setInterval(() => {
-    if (currentStepIndex < steps.length) {
-      scan.currentStep = steps[currentStepIndex];
-      scan.progress = Math.min(progress, 95);
-      scan.lastCompletedStep = currentStepIndex > 0 ? steps[currentStepIndex - 1] : undefined;
+    if (result.success) {
+      // Update scan with real results
+      scan.status = 'completed';
+      scan.progress = 100;
+      scan.endTime = new Date();
+      scan.reportFile = result.outputFile;
+      scan.currentStep = 'Completed';
+      scan.summary = {
+        filesScanned: result.report.executionSummary.totalFiles,
+        issuesFound: result.report.executionSummary.issuesFound,
+        riskLevel: result.report.securityAnalysis.riskAssessment.summary.riskLevel
+      };
+
+      // Store the actual report
+      reports.set(scanId, result.report);
       
-      // Update scan in storage
       scans.set(scanId, scan);
-      
-      // Broadcast update
       broadcastScanUpdate(scanId, scan);
       
-      progress += Math.random() * 20 + 10; // Random progress increment
+      console.log(`✅ Scan ${scanId} completed successfully`);
+    } else {
+      // Handle scan failure
+      scan.status = 'failed';
+      scan.endTime = new Date();
+      scan.currentStep = 'Failed';
+      scan.error = result.error || 'Scan failed';
       
-      if (progress >= 100 || currentStepIndex === steps.length - 1) {
-        // Complete the scan
-        setTimeout(() => {
-          completeScan(scanId);
-        }, 2000);
-        clearInterval(progressInterval);
-      } else if (progress >= (currentStepIndex + 1) * 20) {
-        currentStepIndex++;
-      }
+      scans.set(scanId, scan);
+      broadcastScanUpdate(scanId, scan);
+      
+      console.error(`❌ Scan ${scanId} failed: ${scan.error}`);
     }
-  }, 1500);
-}
 
-// Utility function to complete a scan
-function completeScan(scanId) {
-  const scan = scans.get(scanId);
-  if (!scan) return;
-
-  // Generate mock report
-  const mockReport = generateMockReport(scan.filename);
-  const reportFile = `report-${scanId}.json`;
-  
-  // Save report
-  reports.set(scanId, mockReport);
-  
-  // Update scan
-  scan.status = 'completed';
-  scan.progress = 100;
-  scan.endTime = new Date();
-  scan.reportFile = reportFile;
-  scan.currentStep = 'Completed';
-  scan.summary = {
-    filesScanned: mockReport.executionSummary.totalFiles,
-    issuesFound: mockReport.executionSummary.issuesFound,
-    riskLevel: mockReport.securityAnalysis.riskAssessment.summary.riskLevel
-  };
-  
-  scans.set(scanId, scan);
-  
-  // Broadcast final update
-  broadcastScanUpdate(scanId, scan);
-}
-
-// Generate mock report data
-function generateMockReport(filename) {
-  const severityLevels = ['critical', 'high', 'medium', 'low'];
-  const issueTypes = [
-    'SQL Injection vulnerability',
-    'Cross-Site Scripting (XSS)',
-    'Authentication bypass',
-    'Information disclosure',
-    'Insecure direct object references',
-    'Security misconfiguration',
-    'Sensitive data exposure',
-    'Insufficient logging',
-    'Broken access control',
-    'Using components with known vulnerabilities'
-  ];
-
-  const techStacks = [
-    { name: 'Node.js', category: 'Runtime', confidence: 0.95, version: '18.x' },
-    { name: 'Express', category: 'Framework', confidence: 0.90, version: '4.x' },
-    { name: 'React', category: 'Frontend', confidence: 0.88, version: '18.x' },
-    { name: 'MongoDB', category: 'Database', confidence: 0.75 },
-    { name: 'JWT', category: 'Authentication', confidence: 0.82 }
-  ];
-
-  // Generate random issues
-  const issuesByCategory = {};
-  let totalIssues = 0;
-
-  severityLevels.forEach(severity => {
-    const issueCount = Math.floor(Math.random() * 5) + 1;
-    const issues = [];
+  } catch (error) {
+    console.error(`❌ Scan ${scanId} error:`, error);
     
-    for (let i = 0; i < issueCount; i++) {
-      const issueType = issueTypes[Math.floor(Math.random() * issueTypes.length)];
-      issues.push({
-        id: uuidv4(),
-        title: issueType,
-        description: `A ${severity} severity ${issueType.toLowerCase()} was detected in your codebase.`,
-        severity,
-        category: 'Security',
-        file: `src/${Math.random() > 0.5 ? 'components' : 'utils'}/${filename.replace('.zip', '')}_${i + 1}.js`,
-        line: Math.floor(Math.random() * 100) + 1,
-        recommendation: `Implement proper input validation and sanitization to prevent ${issueType.toLowerCase()}.`,
-        cweId: `${Math.floor(Math.random() * 900) + 100}`,
-        cvssScore: severity === 'critical' ? 9.0 + Math.random() : 
-                   severity === 'high' ? 7.0 + Math.random() * 2 :
-                   severity === 'medium' ? 4.0 + Math.random() * 3 :
-                   1.0 + Math.random() * 3
-      });
-    }
+    // Update scan with error
+    scan.status = 'failed';
+    scan.endTime = new Date();
+    scan.currentStep = 'Failed';
+    scan.error = error.message;
     
-    if (issues.length > 0) {
-      issuesByCategory[severity] = issues;
-      totalIssues += issues.length;
-    }
-  });
-
-  // Determine risk level
-  const riskLevel = issuesByCategory.critical?.length > 0 ? 'Critical' :
-                   issuesByCategory.high?.length > 2 ? 'High' :
-                   issuesByCategory.medium?.length > 5 ? 'Medium' : 'Low';
-
-  return {
-    executionSummary: {
-      totalFiles: Math.floor(Math.random() * 50) + 10,
-      issuesFound: totalIssues,
-      suggestionsGenerated: totalIssues * 2,
-      executionTime: Math.floor(Math.random() * 30000) + 5000
-    },
-    securityAnalysis: {
-      totalIssues,
-      issuesByCategory,
-      riskAssessment: {
-        summary: {
-          riskLevel,
-          riskScore: riskLevel === 'Critical' ? 9.5 : 
-                   riskLevel === 'High' ? 7.8 :
-                   riskLevel === 'Medium' ? 5.2 : 2.1
-        }
-      }
-    },
-    techStackAnalysis: {
-      identifiedStacks: techStacks
-    },
-    actionPlan: {
-      immediate: issuesByCategory.critical ? issuesByCategory.critical.map(issue => ({
-        priority: 'Critical',
-        action: `Fix ${issue.title}`,
-        description: issue.description,
-        impact: 'High security risk - immediate attention required'
-      })) : [],
-      shortTerm: issuesByCategory.high ? issuesByCategory.high.slice(0, 3).map(issue => ({
-        priority: 'High',
-        action: `Address ${issue.title}`,
-        description: issue.description,
-        impact: 'Moderate security risk - address within days'
-      })) : [],
-      longTerm: issuesByCategory.medium ? issuesByCategory.medium.slice(0, 2).map(issue => ({
-        priority: 'Medium',
-        action: `Review ${issue.title}`,
-        description: issue.description,
-        impact: 'Low security risk - address in next sprint'
-      })) : []
-    },
-    appendix: {
-      rulesUsed: Math.floor(Math.random() * 100) + 50
-    }
-  };
+    scans.set(scanId, scan);
+    broadcastScanUpdate(scanId, scan);
+  }
 }
 
 // API Routes
 
 // POST /api/scan - Start a new scan
-app.post('/api/scan', upload.single('codebase'), (req, res) => {
+app.post('/api/scan', upload.single('codebase'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({
@@ -291,6 +320,7 @@ app.post('/api/scan', upload.single('codebase'), (req, res) => {
     const scan = {
       id: scanId,
       filename: req.file.originalname,
+      filePath: req.file.path,
       status: 'started',
       progress: 0,
       startTime: new Date(),
@@ -300,18 +330,18 @@ app.post('/api/scan', upload.single('codebase'), (req, res) => {
     // Store scan
     scans.set(scanId, scan);
 
-    // Start scan simulation
-    setTimeout(() => {
-      scan.status = 'scanning';
-      scans.set(scanId, scan);
-      simulateScanProgress(scanId);
-    }, 1000);
-
+    // Return response immediately
     res.json({
       success: true,
       scanId,
       message: 'Scan started successfully'
     });
+
+    // Start real scan execution asynchronously
+    setTimeout(async () => {
+      await executeScan(scanId, req.file.path);
+    }, 1000);
+
   } catch (error) {
     console.error('Scan start error:', error);
     res.status(500).json({
@@ -450,14 +480,28 @@ app.get('/api/scans', (req, res) => {
 });
 
 // Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    activeScans: scans.size,
-    activeConnections: wsClients.size
-  });
+app.get('/health', async (req, res) => {
+  try {
+    const scannerHealth = await scanner.healthCheck();
+    
+    res.json({
+      status: scannerHealth.status === 'healthy' ? 'healthy' : 'unhealthy',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      activeScans: scans.size,
+      activeConnections: wsClients.size,
+      scanner: scannerHealth
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'unhealthy',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      activeScans: scans.size,
+      activeConnections: wsClients.size,
+      error: error.message
+    });
+  }
 });
 
 // Error handling middleware
@@ -488,17 +532,69 @@ app.use('*', (req, res) => {
 
 const PORT = process.env.PORT || 8000;
 
-server.listen(PORT, () => {
-  console.log(`🚀 Express server running on http://localhost:${PORT}`);
-  console.log(`📡 WebSocket server running on ws://localhost:${PORT}`);
-  console.log(`📋 Available endpoints:`);
-  console.log(`   POST   /api/scan              - Start new scan`);
-  console.log(`   GET    /api/scan/:id          - Get scan status`);
-  console.log(`   DELETE /api/scan/:id          - Delete scan`);
-  console.log(`   GET    /api/scan/:id/report   - Get scan report`);
-  console.log(`   GET    /api/scans             - Get all scans`);
-  console.log(`   GET    /reports/:filename     - Download report file`);
-  console.log(`   GET    /health                - Health check`);
+// Initialize scanner and start server
+async function startServer() {
+  try {
+    console.log('🚀 Starting Code Security Scanner Server...');
+    
+    // Initialize the scanner
+    const scannerInitialized = await scanner.initialize();
+    
+    if (!scannerInitialized) {
+      console.warn('⚠️  Scanner initialization failed, running in limited mode');
+    }
+    
+    // Start the server
+    server.listen(PORT, () => {
+      console.log(`🚀 Express server running on http://localhost:${PORT}`);
+      console.log(`📡 WebSocket server running on ws://localhost:${PORT}`);
+      console.log(`📋 Available endpoints:`);
+      console.log(`   POST   /api/scan              - Start new scan`);
+      console.log(`   GET    /api/scan/:id          - Get scan status`);
+      console.log(`   DELETE /api/scan/:id          - Delete scan`);
+      console.log(`   GET    /api/scan/:id/report   - Get scan report`);
+      console.log(`   GET    /api/scans             - Get all scans`);
+      console.log(`   GET    /reports/:filename     - Download report file`);
+      console.log(`   GET    /health                - Health check`);
+      console.log(`🔒 Scanner status: ${scannerInitialized ? 'Ready' : 'Limited mode'}`);
+    });
+    
+  } catch (error) {
+    console.error('❌ Failed to start server:', error.message);
+    process.exit(1);
+  }
+}
+
+// Handle graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('\n🛑 Received SIGINT, shutting down gracefully...');
+  try {
+    await scanner.cleanup();
+    server.close(() => {
+      console.log('✅ Server closed successfully');
+      process.exit(0);
+    });
+  } catch (error) {
+    console.error('❌ Error during shutdown:', error.message);
+    process.exit(1);
+  }
 });
+
+process.on('SIGTERM', async () => {
+  console.log('\n🛑 Received SIGTERM, shutting down gracefully...');
+  try {
+    await scanner.cleanup();
+    server.close(() => {
+      console.log('✅ Server closed successfully');
+      process.exit(0);
+    });
+  } catch (error) {
+    console.error('❌ Error during shutdown:', error.message);
+    process.exit(1);
+  }
+});
+
+// Start the server
+startServer();
 
 export default app;

@@ -9,9 +9,14 @@ import {
   FileText, 
   TrendingUp,
   Shield,
-  Bug
+  Bug,
+  Activity,
+  Zap,
+  Eye,
+  Hammer,
+  Search
 } from 'lucide-react';
-import { Scan, ScanReport } from '@/types';
+import { Scan, ScanReport, WorkflowEvent } from '@/types';
 import SecurityChart from './SecurityChart';
 import ReportViewer from './ReportViewer';
 
@@ -23,6 +28,9 @@ interface ScanResultsProps {
 export default function ScanResults({ scan, onScanUpdate }: ScanResultsProps) {
   const [report, setReport] = useState<ScanReport | null>(null);
   const [showReport, setShowReport] = useState(false);
+  const [workflowEvents, setWorkflowEvents] = useState<WorkflowEvent[]>([]);
+  const [activeAgent, setActiveAgent] = useState<string | null>(null);
+  const [agentProgress, setAgentProgress] = useState<{[key: string]: { status: string; duration?: number }}>({});
 
   useEffect(() => {
     let ws: WebSocket;
@@ -41,10 +49,48 @@ export default function ScanResults({ scan, onScanUpdate }: ScanResultsProps) {
         ws.onmessage = (event) => {
           const data = JSON.parse(event.data);
           if (data.type === 'scanUpdate' && data.scanId === scan.id) {
+            // Handle workflow events
+            if (data.data.type) {
+              const workflowEvent: WorkflowEvent = {
+                type: data.data.type,
+                timestamp: data.data.timestamp || new Date().toISOString(),
+                status: data.data.status,
+                step: data.data.step,
+                duration: data.data.duration,
+                agent: data.data.agent,
+                error: data.data.error
+              };
+
+              setWorkflowEvents(prev => [...prev, workflowEvent]);
+
+              // Track agent progress
+              if (workflowEvent.type === 'agentStatus' && workflowEvent.agent) {
+                setActiveAgent(workflowEvent.agent);
+                setAgentProgress(prev => ({
+                  ...prev,
+                  [workflowEvent.agent!]: {
+                    status: workflowEvent.status || 'running',
+                    duration: workflowEvent.duration
+                  }
+                }));
+              }
+
+              if (workflowEvent.type === 'stepComplete' && workflowEvent.agent) {
+                setAgentProgress(prev => ({
+                  ...prev,
+                  [workflowEvent.agent!]: {
+                    status: 'completed',
+                    duration: workflowEvent.duration
+                  }
+                }));
+              }
+            }
+
             const updatedScan = {
               ...data.data,
-              startTime: new Date(data.data.startTime),
+              startTime: new Date(data.data.startTime || scan.startTime),
               endTime: data.data.endTime ? new Date(data.data.endTime) : undefined,
+              workflowEvents: workflowEvents
             };
             onScanUpdate(updatedScan);
 
@@ -127,7 +173,50 @@ export default function ScanResults({ scan, onScanUpdate }: ScanResultsProps) {
         clearInterval(pollInterval);
       }
     };
-  }, [scan.id, scan.status, report, onScanUpdate]);
+  }, [scan.id, scan.status, report, onScanUpdate, workflowEvents]);
+
+  const getAgentIcon = (agentName: string) => {
+    switch (agentName.toLowerCase()) {
+      case 'sentinel':
+        return <Search className="w-4 h-4" />;
+      case 'guardian':
+        return <Shield className="w-4 h-4" />;
+      case 'inspector':
+        return <Eye className="w-4 h-4" />;
+      case 'forge':
+        return <Hammer className="w-4 h-4" />;
+      default:
+        return <Activity className="w-4 h-4" />;
+    }
+  };
+
+  const getAgentDescription = (agentName: string) => {
+    switch (agentName.toLowerCase()) {
+      case 'sentinel':
+        return 'Analyzing file structure and technology stack';
+      case 'guardian':
+        return 'Generating security rules and patterns';
+      case 'inspector':
+        return 'Scanning code for vulnerabilities';
+      case 'forge':
+        return 'Creating comprehensive security report';
+      default:
+        return 'Processing...';
+    }
+  };
+
+  const getAgentStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed':
+        return 'text-green-400 bg-green-500/20';
+      case 'running':
+        return 'text-blue-400 bg-blue-500/20';
+      case 'error':
+        return 'text-red-400 bg-red-500/20';
+      default:
+        return 'text-gray-400 bg-gray-500/20';
+    }
+  };
 
   const getStatusIcon = () => {
     switch (scan.status) {
@@ -217,6 +306,140 @@ export default function ScanResults({ scan, onScanUpdate }: ScanResultsProps) {
           </div>
         )}
       </div>
+
+      {/* Agent Workflow Progress */}
+      {(scan.status === 'scanning' || scan.status === 'started') && (
+        <div className="bg-slate-700/50 rounded-lg p-4">
+          <h3 className="text-white font-medium mb-4 flex items-center gap-2">
+            <Activity className="w-5 h-5" />
+            AI Agent Workflow
+          </h3>
+          <div className="space-y-3">
+            {['sentinel', 'guardian', 'inspector', 'forge'].map((agent) => {
+              const progress = agentProgress[agent];
+              const isActive = activeAgent === agent;
+              const isCompleted = progress?.status === 'completed';
+              const hasError = progress?.status === 'error';
+              
+              return (
+                <div key={agent} className={`flex items-center gap-3 p-3 rounded-lg transition-all ${
+                  isActive ? 'bg-blue-500/20 border border-blue-500/50' : 
+                  isCompleted ? 'bg-green-500/20 border border-green-500/50' :
+                  hasError ? 'bg-red-500/20 border border-red-500/50' :
+                  'bg-slate-600/50'
+                }`}>
+                  <div className={`p-2 rounded ${
+                    isActive ? 'bg-blue-500/30' :
+                    isCompleted ? 'bg-green-500/30' :
+                    hasError ? 'bg-red-500/30' :
+                    'bg-slate-500/30'
+                  }`}>
+                    {getAgentIcon(agent)}
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-white font-medium capitalize">{agent} Agent</h4>
+                      {isActive && <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />}
+                      {isCompleted && <CheckCircle className="w-4 h-4 text-green-400" />}
+                      {hasError && <XCircle className="w-4 h-4 text-red-400" />}
+                    </div>
+                    <p className="text-slate-300 text-sm">{getAgentDescription(agent)}</p>
+                    {progress?.duration && (
+                      <p className="text-slate-400 text-xs mt-1">
+                        Completed in {Math.round(progress.duration / 1000)}s
+                      </p>
+                    )}
+                  </div>
+                  <div className={`px-2 py-1 rounded text-xs font-medium border ${
+                    isCompleted ? getAgentStatusColor('completed') :
+                    isActive ? getAgentStatusColor('running') :
+                    hasError ? getAgentStatusColor('error') :
+                    getAgentStatusColor('pending')
+                  }`}>
+                    {isCompleted ? 'Completed' :
+                     isActive ? 'Running' :
+                     hasError ? 'Error' :
+                     'Pending'}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Detailed Workflow Steps */}
+      {workflowEvents.length > 0 && (
+        <div className="bg-slate-700/50 rounded-lg p-4">
+          <h3 className="text-white font-medium mb-4 flex items-center gap-2">
+            <FileText className="w-5 h-5" />
+            Workflow Step Details
+          </h3>
+          <div className="space-y-3 max-h-80 overflow-y-auto">
+            {workflowEvents.map((event, index) => {
+              const timestamp = new Date(event.timestamp).toLocaleTimeString();
+              
+              return (
+                <div key={index} className={`p-3 rounded-lg border ${
+                  event.type === 'workflowError' || event.type === 'stepError' ? 'bg-red-500/10 border-red-500/30' :
+                  event.type === 'stepComplete' ? 'bg-green-500/10 border-green-500/30' :
+                  event.type === 'stepStart' || event.type === 'agentStatus' ? 'bg-blue-500/10 border-blue-500/30' :
+                  'bg-slate-600/30 border-slate-500/30'
+                }`}>
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        {event.type === 'stepStart' && <Clock className="w-4 h-4 text-blue-400" />}
+                        {event.type === 'stepComplete' && <CheckCircle className="w-4 h-4 text-green-400" />}
+                        {event.type === 'stepError' && <XCircle className="w-4 h-4 text-red-400" />}
+                        {event.type === 'agentStatus' && getAgentIcon(event.agent || 'unknown')}
+                        {event.type === 'workflowStatus' && <Activity className="w-4 h-4 text-purple-400" />}
+                        {event.type === 'workflowError' && <AlertTriangle className="w-4 h-4 text-red-400" />}
+                        
+                        <span className="text-white font-medium capitalize">
+                          {event.type.replace(/([A-Z])/g, ' $1').toLowerCase()}
+                        </span>
+                        
+                        {event.agent && (
+                          <span className="px-2 py-1 bg-slate-600 text-slate-300 text-xs rounded capitalize">
+                            {event.agent}
+                          </span>
+                        )}
+                      </div>
+                      
+                      {event.step && (
+                        <p className="text-slate-300 text-sm">{event.step}</p>
+                      )}
+                      
+                      {event.status && (
+                        <p className="text-slate-400 text-sm">Status: {event.status}</p>
+                      )}
+                      
+                      {event.error && (
+                        <p className="text-red-300 text-sm mt-1">Error: {event.error}</p>
+                      )}
+                      
+                      {event.duration && (
+                        <p className="text-slate-500 text-xs mt-1">
+                          Duration: {Math.round(event.duration / 1000)}s
+                        </p>
+                      )}
+                    </div>
+                    
+                    <span className="text-slate-500 text-xs">{timestamp}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          
+          {workflowEvents.length === 0 && (
+            <div className="text-center py-4">
+              <p className="text-slate-400">No workflow events recorded yet</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Summary Cards */}
       {scan.summary && (

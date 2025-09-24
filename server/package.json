@@ -11,6 +11,7 @@
     "health": "node src/main.js health",
     "config": "node src/main.js config",
     "setup-example": "node setup-example.js",
+    "setup-env": "node setup-env.js",
     "test": "jest",
     "dev": "nodemon src/main.js",
     "server": "node express-server.js",
