@@ -667,6 +667,238 @@ export class WorkflowOrchestrator extends EventEmitter {
     }
   }
 
+  // Test method to execute until Inspector Agent
+  async testInspectorOnly(zipFilePath) {
+    try {
+      this.workflowState.status = 'running';
+      this.workflowState.startTime = Date.now();
+      this.workflowState.currentStep = 'starting';
+
+      this.emit('workflow-status', {
+        status: 'running',
+        step: 'starting'
+      });
+
+      console.log(`Starting test execution until Inspector Agent for: ${zipFilePath}`);
+
+      // Step 1: Extract and analyze codebase
+      const extraction = await this.executeStep('extraction', async () => {
+        this.workflowState.currentStep = 'extraction';
+
+        const extractionResult = await this.zipHandler.extractZip(zipFilePath);
+        this.workflowState.metrics.totalFiles = extractionResult.totalFiles;
+
+        return extractionResult;
+      });
+
+      // Step 2: Sentinel Agent - Identify tech stacks
+      const sentinel = await this.executeStep('sentinel', async () => {
+        this.workflowState.currentStep = 'tech-stack-identification';
+
+        const sentinelAgent = this.agents.get('sentinel');
+        return await sentinelAgent.execute({
+          codebasePath: extraction.extractionPath
+        });
+      });
+
+      // Step 3: Guardian Agent - Create rules
+      const guardian = await this.executeStep('guardian', async () => {
+        this.workflowState.currentStep = 'rule-creation';
+
+        const guardianAgent = this.agents.get('guardian');
+        return await guardianAgent.execute({
+          techStacks: sentinel.techStacks,
+          goals: sentinel.goals
+        });
+      });
+
+      // Step 4: Inspector Agent - Analyze code
+      const inspector = await this.executeStep('inspector', async () => {
+        this.workflowState.currentStep = 'security-analysis';
+
+        const inspectorAgent = this.agents.get('inspector');
+        const inspectionResult = await inspectorAgent.execute({
+          codebasePath: extraction.extractionPath,
+          ruleSet: guardian.ruleSet,
+          entryPoints: sentinel.entryPoints
+        });
+
+        this.workflowState.metrics.issuesFound = inspectionResult.issues.length;
+        return inspectionResult;
+      });
+
+      this.workflowState.status = 'completed';
+      this.workflowState.endTime = Date.now();
+      this.workflowState.metrics.executionTime = this.workflowState.endTime - this.workflowState.startTime;
+
+      this.emit('workflow-status', {
+        status: 'completed',
+        metrics: this.workflowState.metrics
+      });
+
+      console.log(`Test execution completed in ${this.workflowState.metrics.executionTime}ms`);
+
+      return {
+        success: true,
+        extraction,
+        sentinel,
+        guardian,
+        inspector,
+        metrics: this.workflowState.metrics
+      };
+
+    } catch (error) {
+      console.error(`Test execution failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        state: this.workflowState
+      };
+    } finally {
+      await this.cleanup();
+    }
+  }
+
+  // Test method to execute until Guardian Agent
+  async testGuardianOnly(zipFilePath) {
+    try {
+      this.workflowState.status = 'running';
+      this.workflowState.startTime = Date.now();
+      this.workflowState.currentStep = 'starting';
+
+      this.emit('workflow-status', {
+        status: 'running',
+        step: 'starting'
+      });
+
+      console.log(`Starting test execution until Guardian Agent for: ${zipFilePath}`);
+
+      // Step 1: Extract and analyze codebase
+      const extraction = await this.executeStep('extraction', async () => {
+        this.workflowState.currentStep = 'extraction';
+
+        const extractionResult = await this.zipHandler.extractZip(zipFilePath);
+        this.workflowState.metrics.totalFiles = extractionResult.totalFiles;
+
+        return extractionResult;
+      });
+
+      // Step 2: Sentinel Agent - Identify tech stacks
+      const sentinel = await this.executeStep('sentinel', async () => {
+        this.workflowState.currentStep = 'tech-stack-identification';
+
+        const sentinelAgent = this.agents.get('sentinel');
+        return await sentinelAgent.execute({
+          codebasePath: extraction.extractionPath
+        });
+      });
+
+      // Step 3: Guardian Agent - Create rules
+      const guardian = await this.executeStep('guardian', async () => {
+        this.workflowState.currentStep = 'rule-creation';
+
+        const guardianAgent = this.agents.get('guardian');
+        return await guardianAgent.execute({
+          techStacks: sentinel.techStacks,
+          goals: sentinel.goals
+        });
+      });
+
+      this.workflowState.status = 'completed';
+      this.workflowState.endTime = Date.now();
+      this.workflowState.metrics.executionTime = this.workflowState.endTime - this.workflowState.startTime;
+
+      this.emit('workflow-status', {
+        status: 'completed',
+        metrics: this.workflowState.metrics
+      });
+
+      console.log(`Test execution completed in ${this.workflowState.metrics.executionTime}ms`);
+
+      return {
+        success: true,
+        extraction,
+        sentinel,
+        guardian,
+        metrics: this.workflowState.metrics
+      };
+
+    } catch (error) {
+      console.error(`Test execution failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        state: this.workflowState
+      };
+    } finally {
+      await this.cleanup();
+    }
+  }
+
+  // Test method to execute only until Sentinel Agent
+  async testSentinelOnly(zipFilePath) {
+    try {
+      this.workflowState.status = 'running';
+      this.workflowState.startTime = Date.now();
+      this.workflowState.currentStep = 'starting';
+
+      this.emit('workflow-status', {
+        status: 'running',
+        step: 'starting'
+      });
+
+      console.log(`Starting test execution for: ${zipFilePath}`);
+
+      // Step 1: Extract and analyze codebase
+      const extraction = await this.executeStep('extraction', async () => {
+        this.workflowState.currentStep = 'extraction';
+
+        const extractionResult = await this.zipHandler.extractZip(zipFilePath);
+        this.workflowState.metrics.totalFiles = extractionResult.totalFiles;
+
+        return extractionResult;
+      });
+
+      // Step 2: Sentinel Agent - Identify tech stacks
+      const sentinel = await this.executeStep('sentinel', async () => {
+        this.workflowState.currentStep = 'tech-stack-identification';
+
+        const sentinelAgent = this.agents.get('sentinel');
+        return await sentinelAgent.execute({
+          codebasePath: extraction.extractionPath
+        });
+      });
+
+      this.workflowState.status = 'completed';
+      this.workflowState.endTime = Date.now();
+      this.workflowState.metrics.executionTime = this.workflowState.endTime - this.workflowState.startTime;
+
+      this.emit('workflow-status', {
+        status: 'completed',
+        metrics: this.workflowState.metrics
+      });
+
+      console.log(`Test execution completed in ${this.workflowState.metrics.executionTime}ms`);
+
+      return {
+        success: true,
+        extraction,
+        sentinel,
+        metrics: this.workflowState.metrics
+      };
+
+    } catch (error) {
+      console.error(`Test execution failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        state: this.workflowState
+      };
+    } finally {
+      await this.cleanup();
+    }
+  }
+
   // Health check method
   async healthCheck() {
     const health = {

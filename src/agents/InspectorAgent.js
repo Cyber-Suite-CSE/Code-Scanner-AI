@@ -5,6 +5,7 @@ import path from 'path';
 export class InspectorAgent extends BaseAgent {
   constructor(toolRegistry, anthropicService, options = {}) {
     super('Inspector', toolRegistry, anthropicService, options);
+    
     this.scanResults = new Map();
     this.severityWeights = {
       critical: 10,
@@ -12,7 +13,66 @@ export class InspectorAgent extends BaseAgent {
       medium: 4,
       low: 1
     };
-    this.maxFileSizeForScan = 1024 * 1024; // 1MB
+    
+    // Enhanced context analysis patterns
+    this.contextPatterns = {
+      validation: [
+        /validate|check|verify|assert|test|confirm/i,
+        /instanceof|typeof|isNaN|isFinite/i,
+        /length\s*[><=]/i,
+        /match|test|exec/i
+      ],
+      sanitization: [
+        /sanitize|escape|encode|filter|clean/i,
+        /htmlspecialchars|htmlentities/i,
+        /encodeURI|encodeURIComponent/i,
+        /replace|strip|trim/i
+      ],
+      parameterization: [
+        /prepare|prepared|param|placeholder/i,
+        /\$\d+|\?|\:[\w]+/i,
+        /bind|execute.*\[/i,
+        /query.*params/i
+      ],
+      errorHandling: [
+        /try|catch|except|finally/i,
+        /error|exception|throw/i,
+        /on.*error|onerror/i
+      ],
+      authentication: [
+        /auth|login|session|token|jwt/i,
+        /password|credential|secret/i,
+        /verify|authenticate|authorize/i
+      ],
+      encryption: [
+        /encrypt|decrypt|hash|crypto/i,
+        /bcrypt|scrypt|pbkdf2/i,
+        /aes|rsa|sha/i
+      ]
+    };
+
+    // Language-specific analysis enhancers
+    this.languageAnalyzers = {
+      javascript: {
+        riskyFunctions: ['eval', 'setTimeout', 'setInterval', 'Function', 'innerHTML', 'outerHTML'],
+        secureAlternatives: {
+          'eval': 'JSON.parse() or Function constructor with validation',
+          'innerHTML': 'textContent or createElement',
+          'setTimeout': 'setTimeout with function reference'
+        }
+      },
+      python: {
+        riskyFunctions: ['eval', 'exec', 'compile', 'pickle.loads', 'yaml.load'],
+        secureAlternatives: {
+          'eval': 'ast.literal_eval() for safe evaluation',
+          'pickle.loads': 'json.loads() for data serialization',
+          'yaml.load': 'yaml.safe_load() for YAML parsing'
+        }
+      }
+    };
+
+    this.maxFileSizeForScan = 2 * 1024 * 1024; // 2MB
+    this.maxLinesForDeepAnalysis = 1000;
   }
 
   async onInitialize() {
@@ -23,82 +83,520 @@ export class InspectorAgent extends BaseAgent {
   async onExecute(input) {
     const { codebasePath, ruleSet, entryPoints } = input;
 
-    if (!codebasePath || !ruleSet) {
-      throw new Error('Inspector Agent requires codebase path and rule set');
+    if (!codebasePath || !ruleSet || !Array.isArray(ruleSet)) {
+      throw new Error('Inspector Agent requires codebase path and valid rule set');
     }
 
     this.log(`Starting security scan with ${ruleSet.length} rules`);
 
-    const scanTasks = [
-      () => this.scanCodebase(codebasePath, ruleSet),
-      () => this.analyzeEntryPoints(codebasePath, entryPoints, ruleSet),
-      () => this.performDeepAnalysis(codebasePath, ruleSet)
-    ];
+    try {
+      // Organize rules by language and category for efficient scanning
+      const organizedRules = this.organizeRules(ruleSet);
+      
+      // Get files to scan with language detection
+      const filesToScan = await this.getFilesToScanWithLanguages(codebasePath);
+      
+      // Execute targeted scanning based on organized rules
+      const scanTasks = [
+        () => this.performTargetedScan(filesToScan, organizedRules),
+        () => this.analyzeEntryPointsEnhanced(codebasePath, entryPoints, organizedRules),
+        () => this.performCrossFileAnalysis(codebasePath, organizedRules)
+      ];
 
-    const results = await this.parallel(scanTasks);
-    const consolidatedIssues = this.consolidateIssues(results.successful);
-    const categorizedIssues = this.categorizeIssuesBySeverity(consolidatedIssues);
-    const report = this.generateSecurityReport(consolidatedIssues, categorizedIssues);
+      const results = await this.parallel(scanTasks);
+      
+      // Enhanced issue consolidation and analysis
+      const consolidatedIssues = this.consolidateIssuesEnhanced(results.successful);
+      const categorizedIssues = this.categorizeIssuesBySeverity(consolidatedIssues);
+      const report = this.generateEnhancedSecurityReport(consolidatedIssues, categorizedIssues, organizedRules);
 
-    const result = {
-      issues: consolidatedIssues,
-      categorizedIssues,
-      report,
-      statistics: {
-        totalIssues: consolidatedIssues.length,
-        criticalIssues: categorizedIssues.critical.length,
-        highIssues: categorizedIssues.high.length,
-        mediumIssues: categorizedIssues.medium.length,
-        lowIssues: categorizedIssues.low.length,
-        filesScanned: this.scanResults.size,
-        scanDuration: Date.now() - this.getContext('scanStartTime')
-      }
-    };
+      const result = {
+        issues: consolidatedIssues,
+        categorizedIssues,
+        report,
+        statistics: {
+          totalIssues: consolidatedIssues.length,
+          criticalIssues: categorizedIssues.critical?.length || 0,
+          highIssues: categorizedIssues.high?.length || 0,
+          mediumIssues: categorizedIssues.medium?.length || 0,
+          lowIssues: categorizedIssues.low?.length || 0,
+          filesScanned: this.scanResults.size,
+          rulesApplied: ruleSet.length,
+          scanDuration: Date.now() - this.getContext('scanStartTime'),
+          ruleEffectiveness: this.calculateRuleEffectiveness(consolidatedIssues, ruleSet)
+        }
+      };
 
-    this.storeResult('issues', consolidatedIssues);
-    this.storeResult('report', report);
-    this.storeResult('statistics', result.statistics);
+      this.storeResult('issues', consolidatedIssues);
+      this.storeResult('report', report);
+      this.storeResult('statistics', result.statistics);
 
-    this.log(`Security scan completed: ${consolidatedIssues.length} issues found`);
+      this.log(`Security scan completed: ${consolidatedIssues.length} issues found`);
 
-    return result;
+      return result;
+
+    } catch (error) {
+      this.log(`Inspector execution failed: ${error.message}`, 'error');
+      throw error;
+    }
   }
 
-  async scanCodebase(codebasePath, ruleSet) {
-    this.log('Starting codebase scan');
+  organizeRules(ruleSet) {
+    const organized = {
+      byLanguage: {},
+      byCategory: {},
+      byFramework: {},
+      byDatabase: {},
+      universal: []
+    };
+
+    for (const rule of ruleSet) {
+      // Organize by language
+      if (rule.language) {
+        if (!organized.byLanguage[rule.language]) {
+          organized.byLanguage[rule.language] = [];
+        }
+        organized.byLanguage[rule.language].push(rule);
+      }
+
+      // Organize by category
+      if (rule.category) {
+        if (!organized.byCategory[rule.category]) {
+          organized.byCategory[rule.category] = [];
+        }
+        organized.byCategory[rule.category].push(rule);
+      }
+
+      // Organize by framework
+      if (rule.framework) {
+        if (!organized.byFramework[rule.framework]) {
+          organized.byFramework[rule.framework] = [];
+        }
+        organized.byFramework[rule.framework].push(rule);
+      }
+
+      // Organize by database
+      if (rule.database) {
+        if (!organized.byDatabase[rule.database]) {
+          organized.byDatabase[rule.database] = [];
+        }
+        organized.byDatabase[rule.database].push(rule);
+      }
+
+      // Universal rules (no specific language/framework)
+      if (!rule.language && !rule.framework && !rule.database) {
+        organized.universal.push(rule);
+      }
+    }
+
+    this.log(`Organized ${ruleSet.length} rules: ${Object.keys(organized.byLanguage).length} languages, ${Object.keys(organized.byCategory).length} categories`);
+    
+    return organized;
+  }
+
+  async getFilesToScanWithLanguages(codebasePath) {
+    try {
+      const result = await this.useTool('regex-search', 'searchFiles', {
+        directory: codebasePath,
+        pattern: '*',
+        excludeDirectories: ['node_modules', '.git', 'dist', 'build', '.next', '__pycache__', 'target', 'vendor'],
+        fileExtensions: [
+          '.js', '.jsx', '.mjs', '.ts', '.tsx',
+          '.py', '.pyw', '.pyx',
+          '.java', '.class',
+          '.cs', '.vb',
+          '.php', '.phtml',
+          '.go', '.mod',
+          '.rs', '.toml',
+          '.rb', '.rake',
+          '.cpp', '.c', '.h', '.hpp',
+          '.json', '.xml', '.yml', '.yaml',
+          '.sql', '.config'
+        ]
+      });
+
+      let files = [];
+      if (result?.result?.results) {
+        files = result.result.results.map(r => r.file);
+      } else if (result?.result && Array.isArray(result.result)) {
+        files = result.result;
+      }
+
+      // Enhance files with language detection
+      const enhancedFiles = files.map(filePath => ({
+        path: filePath,
+        language: this.detectLanguageFromFile(filePath),
+        extension: path.extname(filePath).toLowerCase(),
+        priority: this.calculateFilePriority(filePath)
+      }));
+
+      // Sort by priority (critical files first)
+      enhancedFiles.sort((a, b) => b.priority - a.priority);
+
+      this.log(`Found ${enhancedFiles.length} files to scan across ${new Set(enhancedFiles.map(f => f.language)).size} languages`);
+      
+      return enhancedFiles;
+
+    } catch (error) {
+      this.log(`Failed to get files to scan: ${error.message}`, 'warn');
+      return [];
+    }
+  }
+
+  detectLanguageFromFile(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    const fileName = path.basename(filePath).toLowerCase();
+
+    const languageMap = {
+      '.js': 'javascript',
+      '.jsx': 'javascript', 
+      '.mjs': 'javascript',
+      '.ts': 'typescript',
+      '.tsx': 'typescript',
+      '.py': 'python',
+      '.pyw': 'python',
+      '.pyx': 'python',
+      '.java': 'java',
+      '.cs': 'csharp',
+      '.php': 'php',
+      '.phtml': 'php',
+      '.go': 'go',
+      '.rs': 'rust',
+      '.rb': 'ruby',
+      '.cpp': 'cpp',
+      '.c': 'c',
+      '.h': 'c'
+    };
+
+    // Special file name patterns
+    if (fileName.includes('docker')) return 'docker';
+    if (fileName.includes('package.json')) return 'javascript';
+    if (fileName.includes('requirements.txt')) return 'python';
+    if (fileName.includes('cargo.toml')) return 'rust';
+    if (fileName.includes('go.mod')) return 'go';
+
+    return languageMap[ext] || 'unknown';
+  }
+
+  calculateFilePriority(filePath) {
+    const fileName = path.basename(filePath).toLowerCase();
+    let priority = 1;
+
+    // High priority files
+    if (fileName.includes('auth') || fileName.includes('login')) priority += 5;
+    if (fileName.includes('admin') || fileName.includes('root')) priority += 4;
+    if (fileName.includes('config') || fileName.includes('setting')) priority += 3;
+    if (fileName.includes('api') || fileName.includes('service')) priority += 3;
+    if (fileName.includes('main') || fileName.includes('index')) priority += 2;
+    if (fileName.includes('server') || fileName.includes('app')) priority += 2;
+
+    // Entry point indicators
+    if (fileName === 'main.js' || fileName === 'app.js' || fileName === 'server.js') priority += 3;
+    if (fileName === 'main.py' || fileName === 'app.py') priority += 3;
+
+    return priority;
+  }
+
+  async performTargetedScan(filesToScan, organizedRules) {
+    this.log('Starting targeted security scan');
 
     const issues = [];
     const scannedFiles = [];
 
+    for (const fileInfo of filesToScan) {
+      try {
+        // Get applicable rules for this file
+        const applicableRules = this.getApplicableRules(fileInfo, organizedRules);
+        
+        if (applicableRules.length === 0) {
+          continue; // Skip files with no applicable rules
+        }
+
+        const fileIssues = await this.scanFileWithTargetedRules(fileInfo, applicableRules);
+        issues.push(...fileIssues);
+        scannedFiles.push(fileInfo.path);
+
+        if (fileIssues.length > 0) {
+          this.log(`Found ${fileIssues.length} issues in ${path.basename(fileInfo.path)}`);
+        }
+
+      } catch (error) {
+        this.log(`Error scanning file ${fileInfo.path}: ${error.message}`, 'warn');
+      }
+    }
+
+    return { type: 'targeted-scan', issues, scannedFiles };
+  }
+
+  getApplicableRules(fileInfo, organizedRules) {
+    const applicableRules = [];
+
+    // Add language-specific rules
+    if (fileInfo.language && organizedRules.byLanguage[fileInfo.language]) {
+      applicableRules.push(...organizedRules.byLanguage[fileInfo.language]);
+    }
+
+    // Add universal rules
+    applicableRules.push(...organizedRules.universal);
+
+    // Add framework-specific rules (detect from file content if needed)
+    // This could be enhanced with actual framework detection
+
+    return applicableRules;
+  }
+
+  async scanFileWithTargetedRules(fileInfo, rules) {
+    const issues = [];
+
     try {
-      // Get list of all files to scan
-      const filesToScan = await this.getFilesToScan(codebasePath);
+      // Check file size
+      const stats = await fs.stat(fileInfo.path);
+      if (stats.size > this.maxFileSizeForScan) {
+        this.log(`Skipping large file: ${fileInfo.path} (${stats.size} bytes)`, 'warn');
+        return issues;
+      }
 
-      this.log(`Found ${filesToScan.length} files to scan`);
+      // Read and prepare file content
+      const content = await fs.readFile(fileInfo.path, 'utf-8');
+      const lines = content.split('\n');
 
-      for (const filePath of filesToScan) {
+      this.scanResults.set(fileInfo.path, {
+        size: stats.size,
+        lines: lines.length,
+        language: fileInfo.language,
+        priority: fileInfo.priority,
+        scannedAt: new Date().toISOString(),
+        rulesApplied: rules.length
+      });
+
+      // Apply each applicable rule
+      for (const rule of rules) {
         try {
-          const fileIssues = await this.scanFile(filePath, ruleSet);
-          issues.push(...fileIssues);
-          scannedFiles.push(filePath);
+          const ruleIssues = await this.applyRuleToFileEnhanced(
+            fileInfo,
+            content,
+            lines,
+            rule
+          );
 
-          if (fileIssues.length > 0) {
-            this.log(`Found ${fileIssues.length} issues in ${path.basename(filePath)}`);
-          }
+          issues.push(...ruleIssues);
         } catch (error) {
-          this.log(`Error scanning file ${filePath}: ${error.message}`, 'warn');
+          this.log(`Error applying rule ${rule.type} to ${fileInfo.path}: ${error.message}`, 'warn');
         }
       }
 
-      return { type: 'codebase-scan', issues, scannedFiles };
+      return issues;
+
     } catch (error) {
-      this.log(`Codebase scan failed: ${error.message}`, 'error');
-      return { type: 'codebase-scan', issues: [], scannedFiles: [] };
+      this.log(`Error scanning file ${fileInfo.path}: ${error.message}`, 'warn');
+      return issues;
     }
   }
 
-  async analyzeEntryPoints(codebasePath, entryPoints, ruleSet) {
-    this.log('Analyzing entry points');
+  async applyRuleToFileEnhanced(fileInfo, content, lines, rule) {
+    const issues = [];
+
+    try {
+      // Handle different pattern types (RegExp objects vs strings)
+      let pattern = rule.pattern;
+      if (typeof pattern === 'string') {
+        pattern = new RegExp(pattern, 'gi');
+      } else if (!(pattern instanceof RegExp)) {
+        // Skip invalid patterns
+        return issues;
+      }
+
+      const matches = [...content.matchAll(pattern)];
+
+      for (const match of matches) {
+        const lineNumber = this.getLineNumber(content, match.index);
+        const lineContent = lines[lineNumber - 1];
+        const contextLines = this.getContextLines(lines, lineNumber, 5);
+
+        // Enhanced context analysis
+        const contextAnalysis = await this.performEnhancedContextAnalysis(
+          fileInfo,
+          lineContent,
+          contextLines,
+          rule,
+          content
+        );
+
+        // Calculate dynamic confidence based on context
+        const confidence = this.calculateEnhancedConfidence(contextAnalysis, rule, fileInfo);
+
+        // Skip low-confidence issues unless they're critical
+        if (confidence < 0.3 && rule.severity !== 'critical') {
+          continue;
+        }
+
+        const issue = {
+          id: `${rule.type}_${fileInfo.path}_${lineNumber}_${Date.now()}`,
+          ruleId: rule.id,
+          type: rule.type,
+          name: rule.name,
+          description: rule.description,
+          severity: rule.severity,
+          category: rule.category,
+          file: fileInfo.path,
+          language: fileInfo.language,
+          line: lineNumber,
+          column: this.getColumnNumber(content, match.index),
+          matchedText: match[0],
+          lineContent: lineContent.trim(),
+          contextLines,
+          mitigation: rule.mitigation,
+          confidence,
+          cwe: rule.cwe,
+          owasp: rule.owasp,
+          examples: rule.examples,
+          evidence: rule.evidence,
+          ...contextAnalysis,
+          ruleSource: rule.source,
+          detectedAt: new Date().toISOString()
+        };
+
+        issues.push(issue);
+      }
+
+      return issues;
+
+    } catch (error) {
+      this.log(`Error applying rule ${rule.type}: ${error.message}`, 'warn');
+      return [];
+    }
+  }
+
+  async performEnhancedContextAnalysis(fileInfo, lineContent, contextLines, rule, fullContent) {
+    const analysis = {
+      hasValidation: false,
+      hasSanitization: false,
+      hasParameterization: false,
+      hasErrorHandling: false,
+      hasAuthentication: false,
+      hasEncryption: false,
+      riskFactors: [],
+      mitigatingFactors: [],
+      codeQualityIndicators: []
+    };
+
+    const contextContent = contextLines.join('\n').toLowerCase();
+    const surroundingContent = fullContent.toLowerCase();
+
+    // Enhanced pattern matching for security measures
+    for (const [category, patterns] of Object.entries(this.contextPatterns)) {
+      const hasPattern = patterns.some(pattern => pattern.test(contextContent));
+      
+      switch (category) {
+        case 'validation':
+          analysis.hasValidation = hasPattern;
+          if (hasPattern) analysis.mitigatingFactors.push('input-validation');
+          break;
+        case 'sanitization':
+          analysis.hasSanitization = hasPattern;
+          if (hasPattern) analysis.mitigatingFactors.push('data-sanitization');
+          break;
+        case 'parameterization':
+          analysis.hasParameterization = hasPattern;
+          if (hasPattern) analysis.mitigatingFactors.push('parameterized-queries');
+          break;
+        case 'errorHandling':
+          analysis.hasErrorHandling = hasPattern;
+          if (hasPattern) analysis.mitigatingFactors.push('error-handling');
+          break;
+        case 'authentication':
+          analysis.hasAuthentication = hasPattern;
+          if (hasPattern) analysis.mitigatingFactors.push('authentication');
+          break;
+        case 'encryption':
+          analysis.hasEncryption = hasPattern;
+          if (hasPattern) analysis.mitigatingFactors.push('encryption');
+          break;
+      }
+    }
+
+    // Identify risk factors
+    const riskPatterns = [
+      { pattern: /user|input|request|param/i, factor: 'user-input' },
+      { pattern: /admin|root|super|elevated/i, factor: 'privileged-operation' },
+      { pattern: /database|db|sql|query/i, factor: 'database-operation' },
+      { pattern: /file|path|directory|upload/i, factor: 'file-operation' },
+      { pattern: /network|http|url|api/i, factor: 'network-operation' },
+      { pattern: /password|secret|key|token/i, factor: 'credential-handling' },
+      { pattern: /eval|exec|system|shell/i, factor: 'code-execution' },
+      { pattern: /cookie|session|auth/i, factor: 'session-management' }
+    ];
+
+    riskPatterns.forEach(({ pattern, factor }) => {
+      if (pattern.test(contextContent)) {
+        analysis.riskFactors.push(factor);
+      }
+    });
+
+    // Analyze code quality indicators
+    const qualityIndicators = [
+      { pattern: /\/\*.*\*\/|\/\/|#/i, indicator: 'documented' },
+      { pattern: /test|spec|describe|it\(/i, indicator: 'tested' },
+      { pattern: /log|debug|trace/i, indicator: 'logged' },
+      { pattern: /const|final|readonly/i, indicator: 'immutable' }
+    ];
+
+    qualityIndicators.forEach(({ pattern, indicator }) => {
+      if (pattern.test(contextContent)) {
+        analysis.codeQualityIndicators.push(indicator);
+      }
+    });
+
+    // Language-specific analysis
+    if (fileInfo.language && this.languageAnalyzers[fileInfo.language]) {
+      const analyzer = this.languageAnalyzers[fileInfo.language];
+      const riskyFunctionUsed = analyzer.riskyFunctions.some(func => 
+        contextContent.includes(func.toLowerCase())
+      );
+      
+      if (riskyFunctionUsed) {
+        analysis.riskFactors.push('risky-function-usage');
+      }
+    }
+
+    return analysis;
+  }
+
+  calculateEnhancedConfidence(contextAnalysis, rule, fileInfo) {
+    let confidence = 0.7; // Base confidence
+
+    // Reduce confidence for mitigating factors
+    const mitigationReduction = {
+      'input-validation': 0.3,
+      'data-sanitization': 0.25,
+      'parameterized-queries': 0.4,
+      'error-handling': 0.1,
+      'authentication': 0.2,
+      'encryption': 0.15
+    };
+
+    contextAnalysis.mitigatingFactors.forEach(factor => {
+      confidence -= mitigationReduction[factor] || 0.1;
+    });
+
+    // Increase confidence for risk factors
+    confidence += contextAnalysis.riskFactors.length * 0.1;
+
+    // Adjust based on file priority
+    confidence += (fileInfo.priority - 1) * 0.05;
+
+    // Rule-specific confidence adjustments
+    if (rule.source === 'ai-enhanced') confidence += 0.1;
+    if (rule.confidence) confidence = (confidence + rule.confidence) / 2;
+
+    // Quality indicators slightly reduce confidence (better code practices)
+    confidence -= contextAnalysis.codeQualityIndicators.length * 0.02;
+
+    return Math.max(0.1, Math.min(1.0, confidence));
+  }
+
+  async analyzeEntryPointsEnhanced(codebasePath, entryPoints, organizedRules) {
+    this.log('Analyzing entry points with enhanced detection');
 
     const issues = [];
 
@@ -108,24 +606,54 @@ export class InspectorAgent extends BaseAgent {
 
     for (const entryPoint of entryPoints) {
       try {
-        const filePath = path.join(codebasePath, entryPoint.file);
+        // Resolve entry point path
+        let filePath;
+        if (path.isAbsolute(entryPoint.file)) {
+          filePath = entryPoint.file;
+        } else {
+          filePath = path.join(codebasePath, entryPoint.file);
+        }
+
+        // Check if file exists
+        if (!await fs.pathExists(filePath)) {
+          // Try to find the file in subdirectories
+          const fileName = path.basename(entryPoint.file);
+          const foundFiles = await this.findFileInDirectory(codebasePath, fileName);
+          if (foundFiles.length > 0) {
+            filePath = foundFiles[0];
+          } else {
+            this.log(`Entry point file not found: ${entryPoint.file}`, 'warn');
+            continue;
+          }
+        }
+
+        const fileInfo = {
+          path: filePath,
+          language: entryPoint.language || this.detectLanguageFromFile(filePath),
+          priority: 10 // High priority for entry points
+        };
+
+        // Get applicable rules for entry point
+        const applicableRules = this.getApplicableRules(fileInfo, organizedRules);
 
         // Enhanced analysis for entry points
-        const entryPointIssues = await this.scanFile(filePath, ruleSet, {
-          isEntryPoint: true,
-          severityMultiplier: 1.5 // Higher severity for entry points
-        });
+        const entryPointIssues = await this.scanFileWithTargetedRules(fileInfo, applicableRules);
 
-        // Add entry point context to issues
+        // Enhance issues with entry point context
         entryPointIssues.forEach(issue => {
           issue.isEntryPoint = true;
           issue.entryPointType = entryPoint.type;
-          issue.adjustedSeverity = this.adjustSeverityForEntryPoint(issue.severity);
+          issue.entryPointConfidence = entryPoint.confidence;
+          
+          // Increase severity for entry point issues
+          issue.severity = this.adjustSeverityForEntryPoint(issue.severity);
+          issue.confidence = Math.min(1.0, issue.confidence + 0.2);
         });
 
         issues.push(...entryPointIssues);
 
-        this.log(`Entry point analysis of ${entryPoint.file}: ${entryPointIssues.length} issues`);
+        this.log(`Entry point analysis of ${path.basename(entryPoint.file)}: ${entryPointIssues.length} issues`);
+
       } catch (error) {
         this.log(`Error analyzing entry point ${entryPoint.file}: ${error.message}`, 'warn');
       }
@@ -134,248 +662,84 @@ export class InspectorAgent extends BaseAgent {
     return { type: 'entry-point-analysis', issues };
   }
 
-  async performDeepAnalysis(codebasePath, ruleSet) {
-    this.log('Performing deep analysis');
-
-    const issues = [];
-
-    try {
-      // Cross-file analysis
-      const crossFileIssues = await this.performCrossFileAnalysis(codebasePath, ruleSet);
-      issues.push(...crossFileIssues);
-
-      // Configuration analysis
-      const configIssues = await this.analyzeConfigurationFiles(codebasePath, ruleSet);
-      issues.push(...configIssues);
-
-      // Dependency analysis
-      const dependencyIssues = await this.analyzeDependencies(codebasePath);
-      issues.push(...dependencyIssues);
-
-      return { type: 'deep-analysis', issues };
-    } catch (error) {
-      this.log(`Deep analysis failed: ${error.message}`, 'warn');
-      return { type: 'deep-analysis', issues: [] };
-    }
-  }
-
-  async getFilesToScan(codebasePath) {
+  async findFileInDirectory(directory, fileName) {
+    const foundFiles = [];
+    
     try {
       const result = await this.useTool('regex-search', 'searchFiles', {
-        directory: codebasePath,
-        pattern: '*',
-        excludeDirectories: ['node_modules', '.git', 'dist', 'build', '.next', '__pycache__'],
-        fileExtensions: [
-          '.js', '.jsx', '.ts', '.tsx', '.py', '.java', '.cs',
-          '.php', '.go', '.rs', '.rb', '.cpp', '.c', '.h'
-        ]
+        directory,
+        pattern: fileName,
+        exactMatch: true
       });
 
-      // Handle the new result structure
-      if (result && result.result && result.result.results) {
-        return result.result.results.map(r => r.file);
-      } else if (result && result.result) {
-        return Array.isArray(result.result) ? result.result : [];
+      if (result?.result?.results) {
+        foundFiles.push(...result.result.results.map(r => r.file));
+      } else if (result?.result && Array.isArray(result.result)) {
+        foundFiles.push(...result.result);
       }
-
-      return [];
     } catch (error) {
-      this.log(`Failed to get files to scan: ${error.message}`, 'warn');
-      return [];
+      this.log(`Error finding file ${fileName}: ${error.message}`, 'warn');
     }
+
+    return foundFiles;
   }
 
-  async scanFile(filePath, ruleSet, options = {}) {
-    const issues = [];
-
-    try {
-      // Check file size
-      const stats = await fs.stat(filePath);
-      if (stats.size > this.maxFileSizeForScan) {
-        this.log(`Skipping large file: ${filePath} (${stats.size} bytes)`, 'warn');
-        return issues;
-      }
-
-      // Read file content
-      const content = await fs.readFile(filePath, 'utf-8');
-      const lines = content.split('\n');
-
-      this.scanResults.set(filePath, {
-        size: stats.size,
-        lines: lines.length,
-        scannedAt: new Date().toISOString()
-      });
-
-      // Apply each rule to the file
-      for (const rule of ruleSet) {
-        try {
-          const ruleIssues = await this.applyRuleToFile(
-            filePath,
-            content,
-            lines,
-            rule,
-            options
-          );
-
-          issues.push(...ruleIssues);
-        } catch (error) {
-          this.log(`Error applying rule ${rule.type} to ${filePath}: ${error.message}`, 'warn');
-        }
-      }
-
-      return issues;
-    } catch (error) {
-      this.log(`Error scanning file ${filePath}: ${error.message}`, 'warn');
-      return issues;
-    }
-  }
-
-  async applyRuleToFile(filePath, content, lines, rule, options = {}) {
-    const issues = [];
-
-    try {
-      const matches = [...content.matchAll(rule.pattern)];
-
-      for (const match of matches) {
-        const lineNumber = this.getLineNumber(content, match.index);
-        const lineContent = lines[lineNumber - 1];
-        const contextLines = this.getContextLines(lines, lineNumber, 3);
-
-        // Perform additional context checks
-        const contextAnalysis = await this.analyzeContext(
-          filePath,
-          lineContent,
-          contextLines,
-          rule
-        );
-
-        const severity = options.severityMultiplier
-          ? this.adjustSeverity(rule.severity, options.severityMultiplier)
-          : rule.severity;
-
-        const issue = {
-          id: `${rule.type}_${filePath}_${lineNumber}_${Date.now()}`,
-          ruleId: rule.id,
-          type: rule.type,
-          name: rule.name,
-          description: rule.description,
-          severity,
-          category: rule.category,
-          file: filePath,
-          line: lineNumber,
-          column: this.getColumnNumber(content, match.index),
-          matchedText: match[0],
-          lineContent: lineContent.trim(),
-          contextLines,
-          mitigation: rule.mitigation,
-          confidence: this.calculateConfidence(contextAnalysis, rule),
-          ...contextAnalysis,
-          ...options
-        };
-
-        issues.push(issue);
-      }
-
-      return issues;
-    } catch (error) {
-      this.log(`Error applying rule ${rule.type}: ${error.message}`, 'warn');
-      return [];
-    }
-  }
-
-  async analyzeContext(filePath, lineContent, contextLines, rule) {
-    const analysis = {
-      hasValidation: false,
-      hasSanitization: false,
-      hasParameterization: false,
-      hasErrorHandling: false,
-      riskFactors: []
-    };
-
-    const contextContent = contextLines.join('\n').toLowerCase();
-
-    // Check for security measures
-    const validationPatterns = ['validate', 'check', 'verify', 'assert'];
-    const sanitizationPatterns = ['sanitize', 'escape', 'encode', 'filter'];
-    const parameterizationPatterns = ['prepare', 'param', 'placeholder', '\\?'];
-    const errorHandlingPatterns = ['try', 'catch', 'except', 'error'];
-
-    analysis.hasValidation = validationPatterns.some(p => contextContent.includes(p));
-    analysis.hasSanitization = sanitizationPatterns.some(p => contextContent.includes(p));
-    analysis.hasParameterization = parameterizationPatterns.some(p => contextContent.includes(p));
-    analysis.hasErrorHandling = errorHandlingPatterns.some(p => contextContent.includes(p));
-
-    // Identify risk factors
-    const riskPatterns = [
-      { pattern: 'user', factor: 'user-input' },
-      { pattern: 'request', factor: 'external-input' },
-      { pattern: 'url', factor: 'url-parameter' },
-      { pattern: 'file', factor: 'file-operation' },
-      { pattern: 'database', factor: 'database-operation' },
-      { pattern: 'admin', factor: 'privileged-operation' }
-    ];
-
-    riskPatterns.forEach(({ pattern, factor }) => {
-      if (contextContent.includes(pattern)) {
-        analysis.riskFactors.push(factor);
-      }
-    });
-
-    return analysis;
-  }
-
-  async performCrossFileAnalysis(codebasePath, ruleSet) {
+  async performCrossFileAnalysis(codebasePath, organizedRules) {
     this.log('Performing cross-file analysis');
 
     const issues = [];
 
     try {
-      // Look for patterns across multiple files
-      const crossFilePatterns = [
-        {
-          type: 'hardcoded-secrets-spread',
-          description: 'Same secret appears in multiple files',
-          severity: 'critical'
-        },
-        {
-          type: 'inconsistent-auth',
-          description: 'Inconsistent authentication patterns',
-          severity: 'medium'
-        }
-      ];
+      // Analyze configuration consistency
+      const configIssues = await this.analyzeConfigurationConsistency(codebasePath, organizedRules);
+      issues.push(...configIssues);
 
-      for (const pattern of crossFilePatterns) {
-        const crossFileIssues = await this.detectCrossFilePattern(codebasePath, pattern);
-        issues.push(...crossFileIssues);
-      }
+      // Analyze secret reuse across files
+      const secretIssues = await this.analyzeSecretReuse(codebasePath, organizedRules);
+      issues.push(...secretIssues);
 
-      return issues;
+      // Analyze authentication patterns
+      const authIssues = await this.analyzeAuthenticationPatterns(codebasePath, organizedRules);
+      issues.push(...authIssues);
+
+      return { type: 'cross-file-analysis', issues };
+
     } catch (error) {
       this.log(`Cross-file analysis failed: ${error.message}`, 'warn');
-      return [];
+      return { type: 'cross-file-analysis', issues: [] };
     }
   }
 
-  async analyzeConfigurationFiles(codebasePath, ruleSet) {
-    const configFiles = [
-      'package.json',
-      'web.config',
-      'app.config',
-      'settings.py',
-      'application.properties',
-      'docker-compose.yml',
-      'Dockerfile'
-    ];
-
+  async analyzeConfigurationConsistency(codebasePath, organizedRules) {
     const issues = [];
+    
+    // Look for configuration files
+    const configFiles = [
+      'package.json', 'requirements.txt', 'web.config', 'app.config',
+      'docker-compose.yml', 'Dockerfile', '.env', 'config.json'
+    ];
 
     for (const configFile of configFiles) {
       try {
         const configPath = path.join(codebasePath, configFile);
-
+        
         if (await fs.pathExists(configPath)) {
-          const configIssues = await this.scanFile(configPath, ruleSet, {
-            isConfiguration: true
+          const fileInfo = {
+            path: configPath,
+            language: 'config',
+            priority: 8
+          };
+
+          const applicableRules = organizedRules.universal.concat(
+            organizedRules.byCategory.secrets || [],
+            organizedRules.byCategory.configuration || []
+          );
+
+          const configIssues = await this.scanFileWithTargetedRules(fileInfo, applicableRules);
+          
+          configIssues.forEach(issue => {
+            issue.isConfiguration = true;
+            issue.configType = configFile;
           });
 
           issues.push(...configIssues);
@@ -388,104 +752,236 @@ export class InspectorAgent extends BaseAgent {
     return issues;
   }
 
-  async analyzeDependencies(codebasePath) {
+  async analyzeSecretReuse(codebasePath, organizedRules) {
     const issues = [];
+    const secretPatterns = new Map();
 
-    try {
-      // Analyze package.json for JavaScript projects
-      const packageJsonPath = path.join(codebasePath, 'package.json');
-
-      if (await fs.pathExists(packageJsonPath)) {
-        const packageJson = await fs.readJSON(packageJsonPath);
-        const depIssues = this.checkDependencyVulnerabilities(packageJson);
-        issues.push(...depIssues);
-      }
-
-      // Analyze requirements.txt for Python projects
-      const requirementsPath = path.join(codebasePath, 'requirements.txt');
-
-      if (await fs.pathExists(requirementsPath)) {
-        const requirements = await fs.readFile(requirementsPath, 'utf-8');
-        const pythonDepIssues = this.checkPythonDependencies(requirements);
-        issues.push(...pythonDepIssues);
-      }
-
-      return issues;
-    } catch (error) {
-      this.log(`Dependency analysis failed: ${error.message}`, 'warn');
-      return [];
-    }
-  }
-
-  checkDependencyVulnerabilities(packageJson) {
-    const issues = [];
-
-    // Known vulnerable packages (simplified list)
-    const vulnerablePackages = [
-      'lodash',
-      'moment',
-      'debug',
-      'request',
-      'node-sass'
-    ];
-
-    const allDeps = {
-      ...packageJson.dependencies,
-      ...packageJson.devDependencies
-    };
-
-    for (const [pkg, version] of Object.entries(allDeps || {})) {
-      if (vulnerablePackages.includes(pkg)) {
-        issues.push({
-          id: `dep_${pkg}_${Date.now()}`,
-          type: 'vulnerable-dependency',
-          name: 'Potentially vulnerable dependency',
-          description: `Package ${pkg} may have known vulnerabilities`,
-          severity: 'medium',
-          category: 'dependency',
-          file: 'package.json',
-          package: pkg,
-          version,
-          mitigation: `Update ${pkg} to latest secure version`
-        });
-      }
+    // Extract secret-related rules
+    const secretRules = organizedRules.byCategory.secrets || [];
+    
+    for (const rule of secretRules) {
+      // This would require more sophisticated analysis
+      // For now, we'll skip complex cross-file secret analysis
     }
 
     return issues;
   }
 
-  checkPythonDependencies(requirements) {
+  async analyzeAuthenticationPatterns(codebasePath, organizedRules) {
     const issues = [];
-    const lines = requirements.split('\n');
 
-    lines.forEach((line, index) => {
-      if (line.trim() && !line.startsWith('#')) {
-        // Basic check for outdated syntax or patterns
-        if (line.includes('==') && !line.includes('>')) {
-          issues.push({
-            id: `py_dep_${index}_${Date.now()}`,
-            type: 'pinned-dependency',
-            name: 'Pinned dependency version',
-            description: 'Dependency pinned to specific version may miss security updates',
-            severity: 'low',
-            category: 'dependency',
-            file: 'requirements.txt',
-            line: index + 1,
-            lineContent: line,
-            mitigation: 'Consider using version ranges for security updates'
-          });
-        }
+    // Look for authentication-related files
+    const authFiles = await this.findFileInDirectory(codebasePath, '*auth*');
+    
+    // Analyze authentication consistency across files
+    // This would require more sophisticated analysis
+
+    return issues;
+  }
+
+  consolidateIssuesEnhanced(results) {
+    const allIssues = [];
+    const issueSignatures = new Set();
+
+    results.forEach(result => {
+      if (result.issues && Array.isArray(result.issues)) {
+        result.issues.forEach(issue => {
+          // Enhanced deduplication
+          const signature = `${issue.type}_${issue.file}_${issue.line}_${issue.matchedText}`;
+
+          if (!issueSignatures.has(signature)) {
+            issueSignatures.add(signature);
+            allIssues.push(issue);
+          } else {
+            // Update existing issue with higher confidence if applicable
+            const existingIssue = allIssues.find(i => 
+              `${i.type}_${i.file}_${i.line}_${i.matchedText}` === signature
+            );
+            
+            if (existingIssue && issue.confidence > existingIssue.confidence) {
+              Object.assign(existingIssue, issue);
+            }
+          }
+        });
       }
     });
 
-    return issues;
+    // Enhanced sorting by severity, confidence, and entry point status
+    return allIssues.sort((a, b) => {
+      // Entry points first
+      if (a.isEntryPoint !== b.isEntryPoint) {
+        return b.isEntryPoint - a.isEntryPoint;
+      }
+
+      // Then by severity
+      const aSeverityWeight = this.severityWeights[a.severity] || 0;
+      const bSeverityWeight = this.severityWeights[b.severity] || 0;
+
+      if (aSeverityWeight !== bSeverityWeight) {
+        return bSeverityWeight - aSeverityWeight;
+      }
+
+      // Then by confidence
+      return (b.confidence || 0) - (a.confidence || 0);
+    });
   }
 
-  detectCrossFilePattern(codebasePath, pattern) {
-    // Simplified cross-file analysis
-    return [];
+  categorizeIssuesBySeverity(issues) {
+    return {
+      critical: issues.filter(i => i.severity === 'critical'),
+      high: issues.filter(i => i.severity === 'high'),
+      medium: issues.filter(i => i.severity === 'medium'),
+      low: issues.filter(i => i.severity === 'low')
+    };
   }
 
+  generateEnhancedSecurityReport(issues, categorizedIssues, organizedRules) {
+    const totalIssues = issues.length;
+    const riskScore = this.calculateRiskScore(categorizedIssues);
+    const scanDuration = Date.now() - this.getContext('scanStartTime');
+
+    return {
+      summary: {
+        totalIssues,
+        riskScore,
+        riskLevel: this.getRiskLevel(riskScore),
+        filesScanned: this.scanResults.size,
+        scanDuration,
+        averageConfidence: this.calculateAverageConfidence(issues),
+        entryPointIssues: issues.filter(i => i.isEntryPoint).length
+      },
+      breakdown: {
+        critical: categorizedIssues.critical?.length || 0,
+        high: categorizedIssues.high?.length || 0,
+        medium: categorizedIssues.medium?.length || 0,
+        low: categorizedIssues.low?.length || 0
+      },
+      languageBreakdown: this.getLanguageBreakdown(issues),
+      categoryBreakdown: this.getCategoryBreakdown(issues),
+      topIssues: issues.slice(0, 10),
+      entryPointIssues: issues.filter(i => i.isEntryPoint).slice(0, 5),
+      recommendedActions: this.generateEnhancedRecommendedActions(categorizedIssues, issues),
+      ruleEffectiveness: this.calculateRuleEffectiveness(issues, Object.values(organizedRules).flat()),
+      scanMetadata: {
+        timestamp: new Date().toISOString(),
+        agent: this.name,
+        version: '2.0.0',
+        rulesApplied: Object.values(organizedRules).flat().length,
+        enhancedAnalysis: true
+      }
+    };
+  }
+
+  calculateAverageConfidence(issues) {
+    if (issues.length === 0) return 0;
+    const totalConfidence = issues.reduce((sum, issue) => sum + (issue.confidence || 0), 0);
+    return Math.round((totalConfidence / issues.length) * 100) / 100;
+  }
+
+  getLanguageBreakdown(issues) {
+    const breakdown = {};
+    issues.forEach(issue => {
+      const lang = issue.language || 'unknown';
+      breakdown[lang] = (breakdown[lang] || 0) + 1;
+    });
+    return breakdown;
+  }
+
+  getCategoryBreakdown(issues) {
+    const breakdown = {};
+    issues.forEach(issue => {
+      const category = issue.category || 'other';
+      breakdown[category] = (breakdown[category] || 0) + 1;
+    });
+    return breakdown;
+  }
+
+  calculateRuleEffectiveness(issues, rules) {
+    const ruleStats = {};
+    
+    rules.forEach(rule => {
+      ruleStats[rule.id] = {
+        applied: 0,
+        issuesFound: 0,
+        effectiveness: 0
+      };
+    });
+
+    issues.forEach(issue => {
+      if (issue.ruleId && ruleStats[issue.ruleId]) {
+        ruleStats[issue.ruleId].issuesFound++;
+      }
+    });
+
+    // Calculate effectiveness
+    Object.keys(ruleStats).forEach(ruleId => {
+      const stats = ruleStats[ruleId];
+      stats.applied = 1; // Simplified - all rules are considered applied
+      stats.effectiveness = stats.issuesFound > 0 ? stats.issuesFound / stats.applied : 0;
+    });
+
+    return ruleStats;
+  }
+
+  generateEnhancedRecommendedActions(categorizedIssues, allIssues) {
+    const actions = [];
+
+    if (categorizedIssues.critical?.length > 0) {
+      actions.push({
+        priority: 'Immediate',
+        action: `Address ${categorizedIssues.critical.length} critical security vulnerabilities`,
+        description: 'Critical vulnerabilities pose immediate threat to application security',
+        timeframe: '24-48 hours',
+        issues: categorizedIssues.critical.slice(0, 3).map(i => ({
+          type: i.type,
+          file: path.basename(i.file),
+          line: i.line
+        }))
+      });
+    }
+
+    if (categorizedIssues.high?.length > 0) {
+      actions.push({
+        priority: 'High',
+        action: `Fix ${categorizedIssues.high.length} high-severity vulnerabilities`,
+        description: 'High-severity issues should be addressed in current development cycle',
+        timeframe: '1-2 weeks',
+        issues: categorizedIssues.high.slice(0, 5).map(i => ({
+          type: i.type,
+          file: path.basename(i.file),
+          line: i.line
+        }))
+      });
+    }
+
+    const entryPointIssues = allIssues.filter(i => i.isEntryPoint);
+    if (entryPointIssues.length > 0) {
+      actions.push({
+        priority: 'High',
+        action: `Secure ${entryPointIssues.length} entry point vulnerabilities`,
+        description: 'Entry point vulnerabilities are easily exploitable and should be prioritized',
+        timeframe: '3-5 days',
+        issues: entryPointIssues.slice(0, 3).map(i => ({
+          type: i.type,
+          file: path.basename(i.file),
+          entryPointType: i.entryPointType
+        }))
+      });
+    }
+
+    if (categorizedIssues.medium?.length > 5) {
+      actions.push({
+        priority: 'Medium',
+        action: 'Implement systematic security review process',
+        description: 'Multiple medium-severity issues indicate need for comprehensive security practices',
+        timeframe: '2-4 weeks'
+      });
+    }
+
+    return actions;
+  }
+
+  // Helper methods (keeping existing implementations)
   getLineNumber(content, index) {
     return content.substring(0, index).split('\n').length;
   }
@@ -501,34 +997,6 @@ export class InspectorAgent extends BaseAgent {
     return lines.slice(start, end);
   }
 
-  calculateConfidence(contextAnalysis, rule) {
-    let confidence = 0.7; // Base confidence
-
-    if (contextAnalysis.hasValidation) confidence -= 0.2;
-    if (contextAnalysis.hasSanitization) confidence -= 0.2;
-    if (contextAnalysis.hasParameterization) confidence -= 0.3;
-    if (contextAnalysis.hasErrorHandling) confidence -= 0.1;
-
-    // Risk factors increase confidence
-    confidence += contextAnalysis.riskFactors.length * 0.1;
-
-    return Math.max(0.1, Math.min(1.0, confidence));
-  }
-
-  adjustSeverity(severity, multiplier) {
-    const severityLevels = ['low', 'medium', 'high', 'critical'];
-    const currentIndex = severityLevels.indexOf(severity);
-
-    if (currentIndex === -1) return severity;
-
-    const newIndex = Math.min(
-      severityLevels.length - 1,
-      Math.round(currentIndex * multiplier)
-    );
-
-    return severityLevels[newIndex];
-  }
-
   adjustSeverityForEntryPoint(severity) {
     const severityMap = {
       low: 'medium',
@@ -540,82 +1008,14 @@ export class InspectorAgent extends BaseAgent {
     return severityMap[severity] || severity;
   }
 
-  consolidateIssues(results) {
-    const allIssues = [];
-    const issueIds = new Set();
-
-    results.forEach(result => {
-      if (result.issues && Array.isArray(result.issues)) {
-        result.issues.forEach(issue => {
-          // Remove duplicates based on type, file, and line
-          const signature = `${issue.type}_${issue.file}_${issue.line}`;
-
-          if (!issueIds.has(signature)) {
-            issueIds.add(signature);
-            allIssues.push(issue);
-          }
-        });
-      }
-    });
-
-    // Sort by severity and confidence
-    return allIssues.sort((a, b) => {
-      const aSeverityWeight = this.severityWeights[a.severity] || 0;
-      const bSeverityWeight = this.severityWeights[b.severity] || 0;
-
-      if (aSeverityWeight !== bSeverityWeight) {
-        return bSeverityWeight - aSeverityWeight;
-      }
-
-      return (b.confidence || 0) - (a.confidence || 0);
-    });
-  }
-
-  categorizeIssuesBySeverity(issues) {
-    return {
-      critical: issues.filter(i => i.severity === 'critical'),
-      high: issues.filter(i => i.severity === 'high'),
-      medium: issues.filter(i => i.severity === 'medium'),
-      low: issues.filter(i => i.severity === 'low')
-    };
-  }
-
-  generateSecurityReport(issues, categorizedIssues) {
-    const totalIssues = issues.length;
-    const riskScore = this.calculateRiskScore(categorizedIssues);
-
-    return {
-      summary: {
-        totalIssues,
-        riskScore,
-        riskLevel: this.getRiskLevel(riskScore),
-        filesScanned: this.scanResults.size,
-        scanDuration: Date.now() - this.getContext('scanStartTime')
-      },
-      breakdown: {
-        critical: categorizedIssues.critical.length,
-        high: categorizedIssues.high.length,
-        medium: categorizedIssues.medium.length,
-        low: categorizedIssues.low.length
-      },
-      topIssues: issues.slice(0, 10),
-      recommendedActions: this.generateRecommendedActions(categorizedIssues),
-      scanMetadata: {
-        timestamp: new Date().toISOString(),
-        agent: this.name,
-        version: '1.0.0'
-      }
-    };
-  }
-
   calculateRiskScore(categorizedIssues) {
     const weights = this.severityWeights;
 
     return (
-      categorizedIssues.critical.length * weights.critical +
-      categorizedIssues.high.length * weights.high +
-      categorizedIssues.medium.length * weights.medium +
-      categorizedIssues.low.length * weights.low
+      (categorizedIssues.critical?.length || 0) * weights.critical +
+      (categorizedIssues.high?.length || 0) * weights.high +
+      (categorizedIssues.medium?.length || 0) * weights.medium +
+      (categorizedIssues.low?.length || 0) * weights.low
     );
   }
 
@@ -624,35 +1024,5 @@ export class InspectorAgent extends BaseAgent {
     if (riskScore >= 30) return 'High';
     if (riskScore >= 15) return 'Medium';
     return 'Low';
-  }
-
-  generateRecommendedActions(categorizedIssues) {
-    const actions = [];
-
-    if (categorizedIssues.critical.length > 0) {
-      actions.push({
-        priority: 'Immediate',
-        action: `Address ${categorizedIssues.critical.length} critical security issues`,
-        description: 'Critical vulnerabilities pose immediate threat to application security'
-      });
-    }
-
-    if (categorizedIssues.high.length > 0) {
-      actions.push({
-        priority: 'High',
-        action: `Fix ${categorizedIssues.high.length} high-severity issues`,
-        description: 'High-severity issues should be addressed in the current development cycle'
-      });
-    }
-
-    if (categorizedIssues.medium.length > 5) {
-      actions.push({
-        priority: 'Medium',
-        action: 'Implement security review process',
-        description: 'Multiple medium-severity issues indicate need for systematic security review'
-      });
-    }
-
-    return actions;
   }
 }

@@ -148,6 +148,69 @@ class CodeSecurityScanner {
       await this.orchestrator.cleanup();
     }
   }
+
+  async testSentinelExecution(zipPath) {
+    try {
+      // Validate input
+      if (!await fs.pathExists(zipPath)) {
+        throw new Error(`Zip file not found: ${zipPath}`);
+      }
+
+      console.log(`🔍 Starting test execution for: ${path.basename(zipPath)}`);
+      console.log(`   File size: ${(await fs.stat(zipPath)).size} bytes\n`);
+
+      // Execute only the extraction and Sentinel Agent steps
+      const result = await this.orchestrator.testSentinelOnly(zipPath);
+
+      return result;
+
+    } catch (error) {
+      console.error(`❌ Test execution failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async testGuardianExecution(zipPath) {
+    try {
+      // Validate input
+      if (!await fs.pathExists(zipPath)) {
+        throw new Error(`Zip file not found: ${zipPath}`);
+      }
+
+      console.log(`🔍 Starting test execution until Guardian Agent for: ${path.basename(zipPath)}`);
+      console.log(`   File size: ${(await fs.stat(zipPath)).size} bytes\n`);
+
+      // Execute until Guardian Agent steps
+      const result = await this.orchestrator.testGuardianOnly(zipPath);
+
+      return result;
+
+    } catch (error) {
+      console.error(`❌ Test execution failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async testInspectorExecution(zipPath) {
+    try {
+      // Validate input
+      if (!await fs.pathExists(zipPath)) {
+        throw new Error(`Zip file not found: ${zipPath}`);
+      }
+
+      console.log(`🔍 Starting test execution until Inspector Agent for: ${path.basename(zipPath)}`);
+      console.log(`   File size: ${(await fs.stat(zipPath)).size} bytes\n`);
+
+      // Execute until Inspector Agent steps
+      const result = await this.orchestrator.testInspectorOnly(zipPath);
+
+      return result;
+
+    } catch (error) {
+      console.error(`❌ Test execution failed: ${error.message}`);
+      throw error;
+    }
+  }
 }
 
 // CLI Configuration
@@ -302,6 +365,171 @@ program
     } catch (error) {
       console.error('Failed to display configuration:', error.message);
       process.exit(1);
+    }
+  });
+
+program
+  .command('test-sentinel')
+  .description('Test execution up to Sentinel Agent and print output')
+  .argument('<zipfile>', 'Path to the zip file containing the codebase')
+  .option('-o, --output <path>', 'Output directory for reports', './output')
+  .option('-c, --config <path>', 'Configuration directory', './config')
+  .option('-t, --temp <path>', 'Temporary directory', './temp')
+  .action(async (zipfile, options) => {
+    const scanner = new CodeSecurityScanner();
+
+    try {
+      // Update config with options
+      scanner.config.outputPath = options.output;
+      scanner.config.configPath = options.config;
+      scanner.config.tempPath = options.temp;
+
+      await scanner.initialize();
+      
+      console.log('🧪 Testing execution until Sentinel Agent...\n');
+      
+      // Execute only until Sentinel Agent
+      const result = await scanner.testSentinelExecution(zipfile);
+      
+      console.log('\n📊 Sentinel Agent Output:');
+      console.log('========================');
+      console.log(JSON.stringify(result, null, 2));
+
+      console.log('\n✅ Test execution completed successfully!');
+      process.exit(0);
+
+    } catch (error) {
+      console.error('Test execution failed:', error.message);
+      process.exit(1);
+    } finally {
+      await scanner.cleanup();
+    }
+  });
+
+program
+  .command('test-guardian')
+  .description('Test execution up to Guardian Agent and print output')
+  .argument('<zipfile>', 'Path to the zip file containing the codebase')
+  .option('-o, --output <path>', 'Output directory for reports', './output')
+  .option('-c, --config <path>', 'Configuration directory', './config')
+  .option('-t, --temp <path>', 'Temporary directory', './temp')
+  .action(async (zipfile, options) => {
+    const scanner = new CodeSecurityScanner();
+
+    try {
+      // Update config with options
+      scanner.config.outputPath = options.output;
+      scanner.config.configPath = options.config;
+      scanner.config.tempPath = options.temp;
+
+      await scanner.initialize();
+      
+      console.log('🧪 Testing execution until Guardian Agent...\n');
+      
+      // Execute until Guardian Agent
+      const result = await scanner.testGuardianExecution(zipfile);
+      
+      console.log('\n📊 Guardian Agent Output:');
+      console.log('=========================');
+      console.log(JSON.stringify(result, null, 2));
+
+      console.log('\n✅ Test execution completed successfully!');
+      process.exit(0);
+
+    } catch (error) {
+      console.error('Test execution failed:', error.message);
+      process.exit(1);
+    } finally {
+      await scanner.cleanup();
+    }
+  });
+
+program
+  .command('test-inspector')
+  .description('Test execution up to Inspector Agent and print output')
+  .argument('<zipfile>', 'Path to the zip file containing the codebase')
+  .option('-o, --output <path>', 'Output directory for reports', './output')
+  .option('-c, --config <path>', 'Configuration directory', './config')
+  .option('-t, --temp <path>', 'Temporary directory', './temp')
+  .action(async (zipfile, options) => {
+    const scanner = new CodeSecurityScanner();
+
+    try {
+      // Update config with options
+      scanner.config.outputPath = options.output;
+      scanner.config.configPath = options.config;
+      scanner.config.tempPath = options.temp;
+
+      await scanner.initialize();
+      
+      console.log('🧪 Testing execution until Inspector Agent...\n');
+      
+      // Execute until Inspector Agent
+      const result = await scanner.testInspectorExecution(zipfile);
+      
+      console.log('\n📊 Inspector Agent Output:');
+      console.log('==========================');
+      console.log(JSON.stringify(result, null, 2));
+
+      console.log('\n✅ Test execution completed successfully!');
+      process.exit(0);
+
+    } catch (error) {
+      console.error('Test execution failed:', error.message);
+      process.exit(1);
+    } finally {
+      await scanner.cleanup();
+    }
+  });
+
+program
+  .command('test-pipeline')
+  .description('Test the complete workflow pipeline and verify data flow')
+  .argument('<zipfile>', 'Path to the zip file containing the codebase')
+  .option('-o, --output <path>', 'Output directory for reports', './output')
+  .option('-c, --config <path>', 'Configuration directory', './config')
+  .option('-t, --temp <path>', 'Temporary directory', './temp')
+  .action(async (zipfile, options) => {
+    const scanner = new CodeSecurityScanner();
+
+    try {
+      // Update config with options
+      scanner.config.outputPath = options.output;
+      scanner.config.configPath = options.config;
+      scanner.config.tempPath = options.temp;
+
+      await scanner.initialize();
+      
+      console.log('🔄 Testing complete workflow pipeline...\n');
+      
+      // Execute complete scan to verify pipeline
+      const result = await scanner.scanCodebase(zipfile, options);
+      
+      console.log('\n📊 Pipeline Verification Results:');
+      console.log('=================================');
+      
+      if (result.success) {
+        console.log('✅ Complete pipeline executed successfully!');
+        console.log(`📄 Report: ${result.outputFile}`);
+        console.log(`📈 Summary: ${result.report.executionSummary.totalFiles} files, ${result.report.executionSummary.issuesFound} issues`);
+        
+        // Verify data flow between agents
+        console.log('\n🔍 Data Flow Verification:');
+        console.log(`  Sentinel → Guardian: ${result.report.techStackAnalysis.identifiedStacks.length} tech stacks passed`);
+        console.log(`  Guardian → Inspector: ${result.report.appendix.rulesUsed} rules generated`);
+        console.log(`  Inspector → Forge: ${result.report.securityAnalysis.totalIssues} issues analyzed`);
+      } else {
+        console.log('❌ Pipeline test failed');
+        console.log(JSON.stringify(result, null, 2));
+      }
+
+      process.exit(0);
+
+    } catch (error) {
+      console.error('Pipeline test failed:', error.message);
+      process.exit(1);
+    } finally {
+      await scanner.cleanup();
     }
   });
 
