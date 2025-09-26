@@ -130,19 +130,24 @@ export class ForgeAgent extends BaseAgent {
         bestPractices.push(...batchResults.practices);
       }
 
-      // Generate comprehensive educational material
+      // Generate comprehensive educational material (enhanced with AI insights)
       const educationalMaterial = this.generateEducationalMaterial(issues, suggestions, techStacks);
       
-      // Create implementation plan
+      // Create implementation plan (enhanced with AI recommendations)
       const implementationPlan = this.generateImplementationPlan(suggestions, issues);
+      
+      // Generate AI-enhanced security recommendations if available
+      const aiRecommendations = await this.generateAISecurityRecommendations(issues, suggestions, techStacks);
 
       const result = {
         suggestions,
         educationalMaterial,
         bestPractices,
         implementationPlan,
+        aiRecommendations: aiRecommendations || null,
         statistics: {
           totalSuggestions: suggestions.length,
+          aiEnhancedSuggestions: suggestions.filter(s => s.aiEnhanced).length,
           criticalFixes: suggestions.filter(s => s.severity === 'critical').length,
           highPriorityFixes: suggestions.filter(s => s.severity === 'high').length,
           estimatedEffort: this.calculateTotalEffort(suggestions),
@@ -152,7 +157,24 @@ export class ForgeAgent extends BaseAgent {
 
       this.storeResult('suggestions', suggestions);
       this.storeResult('educationalMaterial', educationalMaterial);
+      this.storeResult('aiRecommendations', aiRecommendations);
       this.storeResult('statistics', result.statistics);
+
+      const aiEnhancedCount = suggestions.filter(s => s.aiEnhanced).length;
+      this.log(`Generated ${suggestions.length} suggestions (${aiEnhancedCount} AI-enhanced) successfully`);
+      
+      if (aiEnhancedCount > 0) {
+        this.log(`🎉 AI Enhancement Summary:`, 'info');
+        suggestions.filter(s => s.aiEnhanced).forEach(s => {
+          this.log(`  - ${s.title} (${s.severity} severity)`, 'info');
+          if (s.aiInsights?.length > 0) {
+            this.log(`    💡 AI Insights: ${s.aiInsights.length} insights provided`, 'info');
+          }
+          if (s.contextualRecommendations?.length > 0) {
+            this.log(`    🎯 Contextual Recommendations: ${s.contextualRecommendations.length} recommendations`, 'info');
+          }
+        });
+      }
 
       this.log(`Generated ${suggestions.length} secure code suggestions successfully`);
 
@@ -228,9 +250,15 @@ export class ForgeAgent extends BaseAgent {
     const educational = [];
     const practices = [];
 
-    for (const issue of issues) {
+    // Prioritize issues for AI processing (critical and high first)
+    const prioritizedIssues = issues.sort((a, b) => {
+      const severityOrder = { critical: 4, high: 3, medium: 2, low: 1 };
+      return (severityOrder[b.severity] || 0) - (severityOrder[a.severity] || 0);
+    });
+
+    for (const issue of prioritizedIssues) {
       try {
-        // Generate code suggestion
+        // Generate code suggestion (now with AI enhancement for critical/high)
         const suggestion = await this.createSecureSuggestion(issue, techStacks);
         if (suggestion) {
           suggestions.push(suggestion);
@@ -267,6 +295,22 @@ export class ForgeAgent extends BaseAgent {
       // Get secure code pattern
       const codePattern = this.getSecureCodePattern(issue.type, language, framework);
       
+      // Use AI for enhanced remediation suggestions on critical/high severity issues
+      let aiEnhancedSuggestion = null;
+      if (this.anthropicService && (issue.severity === 'critical' || issue.severity === 'high')) {
+        try {
+          this.log(`🤖 Generating AI-enhanced remediation for ${issue.severity} severity ${issue.type} issue`, 'info');
+          aiEnhancedSuggestion = await this.generateAIRemediationSuggestion(issue, language, framework, codePattern);
+          this.log(`✅ AI enhancement completed for issue ${issue.id}`, 'info');
+        } catch (error) {
+          this.log(`❌ AI remediation failed for ${issue.id}: ${error.message}`, 'warn');
+        }
+      } else if (this.anthropicService) {
+        this.log(`ℹ️ Skipping AI enhancement for ${issue.severity} severity issue (only critical/high get AI enhancement)`, 'info');
+      } else {
+        this.log(`⚠️ Anthropic service not available - using template-based suggestions only`, 'warn');
+      }
+      
       // Create comprehensive suggestion
       const suggestion = {
         id: `suggestion_${issue.id || Date.now()}`,
@@ -275,20 +319,20 @@ export class ForgeAgent extends BaseAgent {
         language,
         framework,
         severity: issue.severity,
-        title: `Fix ${this.formatIssueType(issue.type)}`,
-        description: this.generateSuggestionDescription(issue),
+        title: aiEnhancedSuggestion?.title || `Fix ${this.formatIssueType(issue.type)}`,
+        description: aiEnhancedSuggestion?.description || this.generateSuggestionDescription(issue),
         
-        // Code examples
-        codeExample: codePattern ? {
+        // Code examples (use AI-enhanced if available)
+        codeExample: aiEnhancedSuggestion?.codeExample || (codePattern ? {
           original: issue.lineContent || 'Original vulnerable code',
           vulnerable: codePattern.vulnerable,
           secure: codePattern.secure,
           explanation: codePattern.explanation
-        } : null,
+        } : null),
         
-        // Implementation guidance
-        implementationSteps: this.generateImplementationSteps(issue),
-        testingGuidance: this.generateTestingGuidance(issue),
+        // Implementation guidance (use AI-enhanced if available)
+        implementationSteps: aiEnhancedSuggestion?.implementationSteps || this.generateImplementationSteps(issue),
+        testingGuidance: aiEnhancedSuggestion?.testingGuidance || this.generateTestingGuidance(issue),
         
         // Risk and effort assessment
         riskReduction: this.calculateRiskReduction(issue.severity),
@@ -301,7 +345,13 @@ export class ForgeAgent extends BaseAgent {
         // File and location context
         file: issue.file,
         line: issue.line,
-        confidence: issue.confidence || 0.8
+        confidence: issue.confidence || 0.8,
+        
+        // AI enhancement metadata
+        aiEnhanced: !!aiEnhancedSuggestion,
+        aiInsights: aiEnhancedSuggestion?.insights || [],
+        contextualRecommendations: aiEnhancedSuggestion?.contextualRecommendations || [],
+        alternativeApproaches: aiEnhancedSuggestion?.alternativeApproaches || []
       };
 
       return suggestion;
@@ -310,6 +360,135 @@ export class ForgeAgent extends BaseAgent {
       this.log(`Error creating suggestion for issue ${issue.id}: ${error.message}`, 'warn');
       return null;
     }
+  }
+
+  async generateAIRemediationSuggestion(issue, language, framework, codePattern) {
+    const contextLines = issue.contextLines || [];
+    const vulnerableCode = issue.lineContent || '';
+    
+    const prompt = `
+Generate an enhanced secure coding remediation for this vulnerability:
+
+**Vulnerability Details:**
+- Type: ${issue.type}
+- Severity: ${issue.severity}
+- Language: ${language}
+- Framework: ${framework || 'None detected'}
+- File: ${path.basename(issue.file || 'unknown')}
+- Line: ${issue.line || 'unknown'}
+- Description: ${issue.description || 'No description'}
+- CWE: ${issue.cwe || 'Not specified'}
+- OWASP: ${issue.owasp || 'Not specified'}
+
+**Vulnerable Code:**
+\`\`\`${language}
+${vulnerableCode}
+\`\`\`
+
+**Context (surrounding code):**
+\`\`\`${language}
+${contextLines.join('\n')}
+\`\`\`
+
+**Existing Pattern (if available):**
+${codePattern ? `
+Vulnerable: ${codePattern.vulnerable}
+Secure: ${codePattern.secure}
+Explanation: ${codePattern.explanation}
+` : 'No existing pattern available'}
+
+**AI Analysis from Inspector:**
+${issue.aiAnalysis ? `
+- Confidence: ${issue.aiAnalysis.confidenceScore}
+- Exploitability: ${issue.aiAnalysis.exploitability}
+- Business Impact: ${issue.aiAnalysis.businessImpact}
+- Explanation: ${issue.aiAnalysis.explanation}
+- Recommendations: ${issue.aiRecommendations?.join(', ') || 'None'}
+` : 'No AI analysis available'}
+
+Provide comprehensive remediation guidance in JSON format:
+{
+  "title": "Specific, actionable title for this fix",
+  "description": "Detailed description of the vulnerability and why it needs fixing",
+  "codeExample": {
+    "original": "The actual vulnerable code from the context",
+    "secure": "Secure replacement code tailored to this specific context",
+    "explanation": "Why this specific fix works for this context",
+    "additionalConsiderations": "Any additional security considerations"
+  },
+  "implementationSteps": [
+    "Step 1: Specific action for this codebase",
+    "Step 2: Next specific action",
+    "Step 3: Validation step"
+  ],
+  "testingGuidance": {
+    "unitTests": "Specific unit test recommendations",
+    "securityTests": "Security-specific testing approach",
+    "integrationTests": "Integration testing considerations"
+  },
+  "insights": [
+    "Key insight about this vulnerability in this context",
+    "Important consideration for this specific fix"
+  ],
+  "contextualRecommendations": [
+    "Recommendation specific to this codebase/framework",
+    "Architecture-level recommendation"
+  ],
+  "alternativeApproaches": [
+    {
+      "approach": "Alternative fix approach",
+      "pros": "Benefits of this approach",
+      "cons": "Drawbacks of this approach",
+      "effort": "low|medium|high"
+    }
+  ],
+  "preventionStrategies": [
+    "How to prevent this type of vulnerability in the future",
+    "Development process improvements"
+  ]
+}
+`;
+
+    try {
+      const result = await this.analyzeWithAI(contextLines.join('\n'), prompt, {
+        analysisType: 'remediation-suggestion',
+        vulnerabilityType: issue.type,
+        language: language,
+        framework: framework
+      });
+
+      return this.parseAIRemediationResponse(result.analysis);
+
+    } catch (error) {
+      this.log(`AI remediation generation failed: ${error.message}`, 'warn');
+      return null;
+    }
+  }
+
+  parseAIRemediationResponse(aiText) {
+    try {
+      // Extract JSON from AI response
+      const jsonMatch = aiText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        
+        return {
+          title: parsed.title || 'AI-Enhanced Security Fix',
+          description: parsed.description || 'Enhanced remediation suggestion',
+          codeExample: parsed.codeExample || null,
+          implementationSteps: parsed.implementationSteps || [],
+          testingGuidance: parsed.testingGuidance || {},
+          insights: parsed.insights || [],
+          contextualRecommendations: parsed.contextualRecommendations || [],
+          alternativeApproaches: parsed.alternativeApproaches || [],
+          preventionStrategies: parsed.preventionStrategies || []
+        };
+      }
+    } catch (error) {
+      this.log(`Failed to parse AI remediation response: ${error.message}`, 'warn');
+    }
+
+    return null;
   }
 
   detectLanguageFromIssue(issue) {
@@ -894,5 +1073,143 @@ export class ForgeAgent extends BaseAgent {
     };
 
     return priorityMap[severity] || 'medium';
+  }
+
+  async generateAISecurityRecommendations(issues, suggestions, techStacks) {
+    if (!this.anthropicService) {
+      return null;
+    }
+
+    try {
+      const issuesSummary = {
+        total: issues.length,
+        critical: issues.filter(i => i.severity === 'critical').length,
+        high: issues.filter(i => i.severity === 'high').length,
+        medium: issues.filter(i => i.severity === 'medium').length,
+        low: issues.filter(i => i.severity === 'low').length
+      };
+
+      const languageBreakdown = {};
+      issues.forEach(issue => {
+        const lang = this.detectLanguageFromIssue(issue);
+        languageBreakdown[lang] = (languageBreakdown[lang] || 0) + 1;
+      });
+
+      const vulnerabilityTypes = [...new Set(issues.map(i => i.type))];
+
+      const prompt = `
+Analyze this codebase security assessment and provide strategic recommendations:
+
+**Security Assessment Summary:**
+- Total Issues: ${issuesSummary.total}
+- Critical: ${issuesSummary.critical}
+- High: ${issuesSummary.high}
+- Medium: ${issuesSummary.medium}
+- Low: ${issuesSummary.low}
+
+**Languages/Technologies:**
+${Object.entries(languageBreakdown).map(([lang, count]) => `- ${lang}: ${count} issues`).join('\n')}
+
+**Vulnerability Types Found:**
+${vulnerabilityTypes.map(type => `- ${this.formatIssueType(type)}`).join('\n')}
+
+**Tech Stack Context:**
+${techStacks.map(stack => `- ${stack.language}: ${stack.frameworks?.map(f => f.name).join(', ') || 'No frameworks detected'}`).join('\n')}
+
+**AI-Enhanced Suggestions Generated:** ${suggestions.filter(s => s.aiEnhanced).length}/${suggestions.length}
+
+Provide strategic security recommendations in JSON format:
+{
+  "overallRiskAssessment": {
+    "level": "critical|high|medium|low",
+    "description": "Overall security posture assessment",
+    "keyFindings": ["finding 1", "finding 2"]
+  },
+  "immediateActions": [
+    {
+      "action": "Specific immediate action",
+      "rationale": "Why this is urgent",
+      "timeframe": "hours/days"
+    }
+  ],
+  "architecturalRecommendations": [
+    {
+      "area": "Security area (e.g., authentication, data validation)",
+      "recommendation": "Specific architectural improvement",
+      "impact": "Expected security improvement"
+    }
+  ],
+  "processImprovements": [
+    {
+      "process": "Development process to improve",
+      "improvement": "Specific improvement suggestion",
+      "benefit": "Security benefit"
+    }
+  ],
+  "toolingRecommendations": [
+    {
+      "tool": "Security tool or practice",
+      "purpose": "What it addresses",
+      "priority": "high|medium|low"
+    }
+  ],
+  "trainingNeeds": [
+    {
+      "topic": "Security training topic",
+      "audience": "Who needs this training",
+      "urgency": "immediate|high|medium|low"
+    }
+  ],
+  "longTermStrategy": {
+    "goals": ["Long-term security goal 1", "Long-term security goal 2"],
+    "milestones": ["Milestone 1", "Milestone 2"],
+    "timeframe": "Expected timeframe for full implementation"
+  }
+}
+`;
+
+      const result = await this.analyzeWithAI('', prompt, {
+        analysisType: 'strategic-security-recommendations',
+        issueCount: issues.length,
+        languages: Object.keys(languageBreakdown)
+      });
+
+      return this.parseAIRecommendationsResponse(result.analysis);
+
+    } catch (error) {
+      this.log(`AI security recommendations generation failed: ${error.message}`, 'warn');
+      return null;
+    }
+  }
+
+  parseAIRecommendationsResponse(aiText) {
+    try {
+      const jsonMatch = aiText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          overallRiskAssessment: parsed.overallRiskAssessment || {
+            level: 'medium',
+            description: 'Security assessment completed',
+            keyFindings: []
+          },
+          immediateActions: parsed.immediateActions || [],
+          architecturalRecommendations: parsed.architecturalRecommendations || [],
+          processImprovements: parsed.processImprovements || [],
+          toolingRecommendations: parsed.toolingRecommendations || [],
+          trainingNeeds: parsed.trainingNeeds || [],
+          longTermStrategy: parsed.longTermStrategy || {
+            goals: [],
+            milestones: [],
+            timeframe: 'Not specified'
+          },
+          generatedAt: new Date().toISOString()
+        };
+      }
+    } catch (error) {
+      this.log(`Failed to parse AI recommendations response: ${error.message}`, 'warn');
+    }
+
+    return null;
   }
 }

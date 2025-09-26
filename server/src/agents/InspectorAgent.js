@@ -430,13 +430,20 @@ export class InspectorAgent extends BaseAgent {
           continue;
         }
 
+        // Use AI-adjusted severity if available
+        let adjustedSeverity = rule.severity;
+        if (contextAnalysis.aiAnalysis && contextAnalysis.aiAnalysis.adjustedSeverity) {
+          adjustedSeverity = contextAnalysis.aiAnalysis.adjustedSeverity;
+        }
+
         const issue = {
           id: `${rule.type}_${fileInfo.path}_${lineNumber}_${Date.now()}`,
           ruleId: rule.id,
           type: rule.type,
           name: rule.name,
           description: rule.description,
-          severity: rule.severity,
+          severity: adjustedSeverity,
+          originalSeverity: rule.severity,
           category: rule.category,
           file: fileInfo.path,
           language: fileInfo.language,
@@ -453,7 +460,12 @@ export class InspectorAgent extends BaseAgent {
           evidence: rule.evidence,
           ...contextAnalysis,
           ruleSource: rule.source,
-          detectedAt: new Date().toISOString()
+          detectedAt: new Date().toISOString(),
+          // Add AI analysis results
+          exploitability: contextAnalysis.aiAnalysis?.exploitability,
+          businessImpact: contextAnalysis.aiAnalysis?.businessImpact,
+          remediationPriority: contextAnalysis.aiAnalysis?.remediationPriority,
+          aiRecommendations: contextAnalysis.aiAnalysis?.recommendations || []
         };
 
         issues.push(issue);
@@ -477,7 +489,8 @@ export class InspectorAgent extends BaseAgent {
       hasEncryption: false,
       riskFactors: [],
       mitigatingFactors: [],
-      codeQualityIndicators: []
+      codeQualityIndicators: [],
+      aiAnalysis: null
     };
 
     const contextContent = contextLines.join('\n').toLowerCase();
@@ -513,6 +526,28 @@ export class InspectorAgent extends BaseAgent {
           if (hasPattern) analysis.mitigatingFactors.push('encryption');
           break;
       }
+    }
+
+    // Use Anthropic AI for deeper context analysis on high-severity issues
+    if (this.anthropicService && (rule.severity === 'critical' || rule.severity === 'high')) {
+      try {
+        this.log(`🤖 Running AI context analysis for ${rule.severity} severity ${rule.type} in ${path.basename(fileInfo.path)}`, 'info');
+        const aiAnalysis = await this.performAIContextAnalysis(fileInfo, lineContent, contextLines, rule, analysis);
+        analysis.aiAnalysis = aiAnalysis;
+        
+        // Enhance analysis with AI insights
+        if (aiAnalysis.additionalRiskFactors) {
+          analysis.riskFactors.push(...aiAnalysis.additionalRiskFactors);
+        }
+        if (aiAnalysis.additionalMitigatingFactors) {
+          analysis.mitigatingFactors.push(...aiAnalysis.additionalMitigatingFactors);
+        }
+        this.log(`✅ AI analysis completed - confidence: ${aiAnalysis.confidenceScore}, severity: ${aiAnalysis.adjustedSeverity || rule.severity}`, 'info');
+      } catch (error) {
+        this.log(`❌ AI context analysis failed: ${error.message}`, 'warn');
+      }
+    } else if (this.anthropicService) {
+      this.log(`ℹ️ Skipping AI analysis for ${rule.severity} severity issue (only critical/high get AI analysis)`, 'info');
     }
 
     // Identify risk factors
@@ -562,35 +597,144 @@ export class InspectorAgent extends BaseAgent {
     return analysis;
   }
 
+  async performAIContextAnalysis(fileInfo, lineContent, contextLines, rule, basicAnalysis) {
+    const prompt = `
+Analyze this security vulnerability context for more accurate assessment:
+
+**File:** ${path.basename(fileInfo.path)}
+**Language:** ${fileInfo.language}
+**Vulnerability Type:** ${rule.type}
+**Severity:** ${rule.severity}
+**Rule Description:** ${rule.description}
+
+**Vulnerable Line:**
+${lineContent}
+
+**Context (surrounding code):**
+\`\`\`${fileInfo.language}
+${contextLines.join('\n')}
+\`\`\`
+
+**Current Analysis:**
+- Has Validation: ${basicAnalysis.hasValidation}
+- Has Sanitization: ${basicAnalysis.hasSanitization}
+- Has Parameterization: ${basicAnalysis.hasParameterization}
+- Has Error Handling: ${basicAnalysis.hasErrorHandling}
+- Risk Factors: ${basicAnalysis.riskFactors.join(', ') || 'None detected'}
+- Mitigating Factors: ${basicAnalysis.mitigatingFactors.join(', ') || 'None detected'}
+
+Please provide:
+1. **Confidence Assessment**: Rate the likelihood this is a true positive vulnerability (0.0-1.0)
+2. **Severity Adjustment**: Should the severity be adjusted based on context? (keep/increase/decrease)
+3. **Additional Risk Factors**: Any risk factors missed by pattern matching?
+4. **Additional Mitigating Factors**: Any security measures missed by pattern matching?
+5. **Exploitability**: How easily exploitable is this vulnerability in this context?
+6. **Business Impact**: Potential business impact if exploited
+7. **Remediation Priority**: Priority level (immediate/high/medium/low)
+
+Provide response in JSON format:
+{
+  "confidenceScore": 0.0-1.0,
+  "severityAdjustment": "keep|increase|decrease",
+  "adjustedSeverity": "critical|high|medium|low",
+  "additionalRiskFactors": ["factor1", "factor2"],
+  "additionalMitigatingFactors": ["factor1", "factor2"],
+  "exploitability": "trivial|easy|moderate|difficult",
+  "businessImpact": "critical|high|medium|low",
+  "remediationPriority": "immediate|high|medium|low",
+  "explanation": "Brief explanation of the analysis",
+  "recommendations": ["specific recommendation 1", "specific recommendation 2"]
+}
+`;
+
+    try {
+      const result = await this.analyzeWithAI(contextLines.join('\n'), prompt, {
+        analysisType: 'vulnerability-context',
+        fileType: fileInfo.language,
+        vulnerabilityType: rule.type
+      });
+
+      // Parse AI response
+      const aiResponse = this.parseAIResponse(result.analysis);
+      return aiResponse;
+
+    } catch (error) {
+      this.log(`AI context analysis error: ${error.message}`, 'warn');
+      return {
+        confidenceScore: 0.7,
+        severityAdjustment: 'keep',
+        explanation: 'AI analysis unavailable, using pattern-based analysis'
+      };
+    }
+  }
+
+  parseAIResponse(aiText) {
+    try {
+      // Extract JSON from AI response
+      const jsonMatch = aiText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          confidenceScore: parsed.confidenceScore || 0.7,
+          severityAdjustment: parsed.severityAdjustment || 'keep',
+          adjustedSeverity: parsed.adjustedSeverity,
+          additionalRiskFactors: parsed.additionalRiskFactors || [],
+          additionalMitigatingFactors: parsed.additionalMitigatingFactors || [],
+          exploitability: parsed.exploitability || 'moderate',
+          businessImpact: parsed.businessImpact || 'medium',
+          remediationPriority: parsed.remediationPriority || 'medium',
+          explanation: parsed.explanation || '',
+          recommendations: parsed.recommendations || []
+        };
+      }
+    } catch (error) {
+      this.log(`Failed to parse AI response: ${error.message}`, 'warn');
+    }
+
+    // Fallback response
+    return {
+      confidenceScore: 0.7,
+      severityAdjustment: 'keep',
+      explanation: 'Unable to parse AI analysis, using default assessment'
+    };
+  }
+
   calculateEnhancedConfidence(contextAnalysis, rule, fileInfo) {
     let confidence = 0.7; // Base confidence
 
-    // Reduce confidence for mitigating factors
-    const mitigationReduction = {
-      'input-validation': 0.3,
-      'data-sanitization': 0.25,
-      'parameterized-queries': 0.4,
-      'error-handling': 0.1,
-      'authentication': 0.2,
-      'encryption': 0.15
-    };
+    // Use AI confidence if available
+    if (contextAnalysis.aiAnalysis && contextAnalysis.aiAnalysis.confidenceScore) {
+      confidence = contextAnalysis.aiAnalysis.confidenceScore;
+    } else {
+      // Fallback to pattern-based confidence calculation
+      
+      // Reduce confidence for mitigating factors
+      const mitigationReduction = {
+        'input-validation': 0.3,
+        'data-sanitization': 0.25,
+        'parameterized-queries': 0.4,
+        'error-handling': 0.1,
+        'authentication': 0.2,
+        'encryption': 0.15
+      };
 
-    contextAnalysis.mitigatingFactors.forEach(factor => {
-      confidence -= mitigationReduction[factor] || 0.1;
-    });
+      contextAnalysis.mitigatingFactors.forEach(factor => {
+        confidence -= mitigationReduction[factor] || 0.1;
+      });
 
-    // Increase confidence for risk factors
-    confidence += contextAnalysis.riskFactors.length * 0.1;
+      // Increase confidence for risk factors
+      confidence += contextAnalysis.riskFactors.length * 0.1;
 
-    // Adjust based on file priority
-    confidence += (fileInfo.priority - 1) * 0.05;
+      // Adjust based on file priority
+      confidence += (fileInfo.priority - 1) * 0.05;
 
-    // Rule-specific confidence adjustments
-    if (rule.source === 'ai-enhanced') confidence += 0.1;
-    if (rule.confidence) confidence = (confidence + rule.confidence) / 2;
+      // Rule-specific confidence adjustments
+      if (rule.source === 'ai-enhanced') confidence += 0.1;
+      if (rule.confidence) confidence = (confidence + rule.confidence) / 2;
 
-    // Quality indicators slightly reduce confidence (better code practices)
-    confidence -= contextAnalysis.codeQualityIndicators.length * 0.02;
+      // Quality indicators slightly reduce confidence (better code practices)
+      confidence -= contextAnalysis.codeQualityIndicators.length * 0.02;
+    }
 
     return Math.max(0.1, Math.min(1.0, confidence));
   }
