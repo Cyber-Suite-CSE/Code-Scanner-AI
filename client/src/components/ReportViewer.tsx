@@ -23,15 +23,20 @@ import {
   Search,
   Eye,
   Hammer,
-  XCircle
+  XCircle,
+  BarChart3,
+  Settings
 } from 'lucide-react';
+import CodeSuggestionsViewer from './CodeSuggestionsViewer';
+import ExecutionDetailsViewer from './ExecutionDetailsViewer';
+import EnhancedSecurityIssueViewer from './EnhancedSecurityIssueViewer';
 
 interface ReportViewerProps {
   report: ScanReport;
 }
 
 export default function ReportViewer({ report }: ReportViewerProps) {
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary']));
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary', 'issues']));
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [expandedIssues, setExpandedIssues] = useState<Set<string>>(new Set());
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
@@ -256,163 +261,12 @@ export default function ReportViewer({ report }: ReportViewerProps) {
           {/* Issues List */}
           <div className="space-y-3 max-h-96 overflow-y-auto">
             {getFilteredIssues().map((issue, index) => (
-              <div key={index} className="bg-slate-600/50 rounded-lg border border-slate-500">
-                <div className="p-4">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h4 className="text-white font-medium">{issue.title}</h4>
-                        <button
-                          onClick={() => toggleIssue(issue.id)}
-                          className="text-slate-400 hover:text-white transition-colors"
-                        >
-                          {expandedIssues.has(issue.id) ? (
-                            <ChevronDown className="w-4 h-4" />
-                          ) : (
-                            <ChevronRight className="w-4 h-4" />
-                          )}
-                        </button>
-                      </div>
-                      <p className="text-slate-300 text-sm">
-                        {issue.file}
-                        {issue.line && ` (Line ${issue.line}${issue.column ? `:${issue.column}` : ''})`}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`px-2 py-1 rounded text-xs font-medium border capitalize ${getSeverityColor(issue.severity)}`}>
-                        {issue.severity}
-                      </span>
-                      {issue.cvssScore && (
-                        <span className="px-2 py-1 rounded text-xs bg-slate-700 text-slate-300">
-                          CVSS: {issue.cvssScore.toFixed(1)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  
-                  <p className="text-slate-300 text-sm mb-3">{issue.description}</p>
-
-                  {/* Quick Fix - Always visible */}
-                  <div className="bg-slate-700 rounded p-3 mb-3">
-                    <h5 className="text-white text-sm font-medium mb-2 flex items-center gap-2">
-                      <Lightbulb className="w-4 h-4" />
-                      Quick Fix
-                    </h5>
-                    <p className="text-slate-300 text-sm">{issue.recommendation}</p>
-                  </div>
-
-                  {expandedIssues.has(issue.id) && (
-                    <div className="space-y-4 border-t border-slate-500 pt-4">
-                      {/* Code Snippet */}
-                      {issue.codeSnippet && (
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <h5 className="text-white text-sm font-medium flex items-center gap-2">
-                              <Code className="w-4 h-4" />
-                              Vulnerable Code
-                            </h5>
-                            <button
-                              onClick={() => copyToClipboard(issue.codeSnippet!, `snippet-${issue.id}`)}
-                              className="text-slate-400 hover:text-white transition-colors"
-                            >
-                              {copiedSnippet === `snippet-${issue.id}` ? (
-                                <CheckCircle className="w-4 h-4 text-green-400" />
-                              ) : (
-                                <Copy className="w-4 h-4" />
-                              )}
-                            </button>
-                          </div>
-                          <pre className="bg-slate-800 rounded p-3 text-sm text-slate-200 overflow-x-auto">
-                            <code>{issue.codeSnippet}</code>
-                          </pre>
-                        </div>
-                      )}
-
-                      {/* Remediation Steps */}
-                      {issue.remediation && (
-                        <div>
-                          <h5 className="text-white text-sm font-medium mb-3 flex items-center gap-2">
-                            <BookOpen className="w-4 h-4" />
-                            Remediation Guide
-                          </h5>
-                          <div className="bg-slate-700 rounded p-3 space-y-3">
-                            <div className="flex items-center gap-4 text-xs">
-                              <span className={`px-2 py-1 rounded border ${getDifficultyColor(issue.remediation.complexity)}`}>
-                                {issue.remediation.complexity} complexity
-                              </span>
-                              <span className={`px-2 py-1 rounded border ${getDifficultyColor(issue.remediation.effort)}`}>
-                                {issue.remediation.effort} effort
-                              </span>
-                            </div>
-                            <div>
-                              <h6 className="text-white text-xs font-medium mb-2">Steps to fix:</h6>
-                              <ol className="text-slate-300 text-sm space-y-1 list-decimal list-inside">
-                                {issue.remediation.steps.map((step, stepIndex) => (
-                                  <li key={stepIndex}>{step}</li>
-                                ))}
-                              </ol>
-                            </div>
-                            {issue.remediation.references && issue.remediation.references.length > 0 && (
-                              <div>
-                                <h6 className="text-white text-xs font-medium mb-2">References:</h6>
-                                <div className="space-y-1">
-                                  {issue.remediation.references.map((ref, refIndex) => (
-                                    <a
-                                      key={refIndex}
-                                      href={ref}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="text-blue-400 hover:text-blue-300 text-xs flex items-center gap-1"
-                                    >
-                                      <ExternalLink className="w-3 h-3" />
-                                      {ref}
-                                    </a>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Compliance Information */}
-                      {issue.compliance && (
-                        <div>
-                          <h5 className="text-white text-sm font-medium mb-2 flex items-center gap-2">
-                            <Award className="w-4 h-4" />
-                            Compliance Mapping
-                          </h5>
-                          <div className="flex flex-wrap gap-2">
-                            {issue.compliance.owasp?.map((item, i) => (
-                              <span key={i} className="px-2 py-1 bg-orange-500/20 text-orange-300 text-xs rounded">
-                                OWASP: {item}
-                              </span>
-                            ))}
-                            {issue.compliance.nist?.map((item, i) => (
-                              <span key={i} className="px-2 py-1 bg-blue-500/20 text-blue-300 text-xs rounded">
-                                NIST: {item}
-                              </span>
-                            ))}
-                            {issue.compliance.iso27001?.map((item, i) => (
-                              <span key={i} className="px-2 py-1 bg-green-500/20 text-green-300 text-xs rounded">
-                                ISO 27001: {item}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* CWE and CVSS info - Always visible */}
-                {issue.cweId && (
-                  <div className="flex items-center gap-2 text-xs text-slate-400 mt-3">
-                    <span>CWE-{issue.cweId}</span>
-                    {issue.cvssScore && <span>• CVSS: {issue.cvssScore.toFixed(1)}</span>}
-                  </div>
-                )}
-              </div>
+              <EnhancedSecurityIssueViewer
+                key={issue.id || index}
+                issue={issue}
+                isExpanded={expandedIssues.has(issue.id)}
+                onToggle={toggleIssue}
+              />
             ))}
           </div>
         </div>
@@ -832,83 +686,25 @@ export default function ReportViewer({ report }: ReportViewerProps) {
         </Section>
       )}
 
-      {/* Workflow Metrics */}
-      {report.appendix?.workflowMetrics && (
+      {/* Code Suggestions */}
+      {report.codeSuggestions && report.codeSuggestions.suggestions && report.codeSuggestions.suggestions.length > 0 && (
         <Section 
-          title="Workflow Performance" 
-          id="performance" 
-          icon={<TrendingUp className="w-5 h-5 text-green-400" />}
+          title="Code Suggestions" 
+          id="codesuggestions" 
+          icon={<Code className="w-5 h-5 text-blue-400" />}
         >
-          <div className="space-y-4">
-            {/* Overall metrics */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-slate-600/50 rounded-lg p-4">
-                <h4 className="text-white font-medium mb-2">Total Execution Time</h4>
-                <p className="text-2xl font-bold text-green-400">
-                  {Math.round(report.appendix.workflowMetrics.totalExecutionTime / 1000)}s
-                </p>
-              </div>
-              
-              {report.appendix.workflowMetrics.resourceUsage && (
-                <>
-                  <div className="bg-slate-600/50 rounded-lg p-4">
-                    <h4 className="text-white font-medium mb-2">Memory Usage</h4>
-                    <p className="text-2xl font-bold text-blue-400">
-                      {Math.round(report.appendix.workflowMetrics.resourceUsage.memory)}MB
-                    </p>
-                  </div>
-                  
-                  <div className="bg-slate-600/50 rounded-lg p-4">
-                    <h4 className="text-white font-medium mb-2">CPU Usage</h4>
-                    <p className="text-2xl font-bold text-purple-400">
-                      {Math.round(report.appendix.workflowMetrics.resourceUsage.cpu)}%
-                    </p>
-                  </div>
-                </>
-              )}
-            </div>
-            
-            {/* Agent performance breakdown */}
-            {report.appendix.workflowMetrics.agentPerformance && (
-              <div>
-                <h4 className="text-white font-medium mb-3">Agent Performance</h4>
-                <div className="space-y-2">
-                  {Object.entries(report.appendix.workflowMetrics.agentPerformance).map(([agent, perf]) => (
-                    <div key={agent} className="bg-slate-600/50 rounded-lg p-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          {getAgentIcon(agent)}
-                          <span className="text-white font-medium capitalize">{agent}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {perf.success ? (
-                            <CheckCircle className="w-4 h-4 text-green-400" />
-                          ) : (
-                            <XCircle className="w-4 h-4 text-red-400" />
-                          )}
-                          <span className={`text-sm ${perf.success ? 'text-green-400' : 'text-red-400'}`}>
-                            {perf.success ? 'Success' : 'Failed'}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <span className="text-slate-400">Execution Time:</span>
-                          <span className="text-slate-300 ml-2">{Math.round(perf.executionTime / 1000)}s</span>
-                        </div>
-                        <div>
-                          <span className="text-slate-400">Items Processed:</span>
-                          <span className="text-slate-300 ml-2">{perf.itemsProcessed}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          <CodeSuggestionsViewer suggestions={report.codeSuggestions.suggestions} />
         </Section>
       )}
+
+      {/* Execution Details */}
+      <Section 
+        title="Execution Details & Performance" 
+        id="executiondetails" 
+        icon={<BarChart3 className="w-5 h-5 text-green-400" />}
+      >
+        <ExecutionDetailsViewer report={report} />
+      </Section>
     </div>
   );
 }

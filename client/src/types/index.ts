@@ -29,7 +29,15 @@ export interface WorkflowEvent {
 }
 
 export interface ScanReport {
+  metadata?: {
+    generatedAt: string;
+    scanDuration: number;
+    version: string;
+    workflow: string;
+  };
   executionSummary: {
+    status?: string;
+    stepsExecuted?: string[];
     totalFiles: number;
     issuesFound: number;
     suggestionsGenerated: number;
@@ -72,6 +80,10 @@ export interface ScanReport {
     securityRecommendations?: TechStackRecommendation[];
     dependencyAnalysis?: DependencyAnalysis;
   };
+  codeSuggestions?: {
+    totalSuggestions: number;
+    suggestions: CodeSuggestion[];
+  };
   actionPlan: {
     immediate: ActionItem[];
     shortTerm: ActionItem[];
@@ -80,6 +92,15 @@ export interface ScanReport {
   };
   appendix: {
     rulesUsed: number;
+    toolsUsed?: string[];
+    agentExecutionDetails?: {
+      [agentName: string]: {
+        status: string;
+        executionCount: number;
+        lastExecution: string;
+        resultsCount: number;
+      };
+    };
     agentReports?: {
       sentinel?: any;
       guardian?: any;
@@ -93,14 +114,26 @@ export interface ScanReport {
 
 export interface SecurityIssue {
   id: string;
+  ruleId?: string;
+  type?: string;
+  name?: string;
   title: string;
   description: string;
   severity: 'critical' | 'high' | 'medium' | 'low';
+  originalSeverity?: string;
   category: string;
   file: string;
+  language?: string;
   line?: number;
   column?: number;
+  matchedText?: string;
+  lineContent?: string;
+  contextLines?: string[];
+  mitigation?: string;
   recommendation: string;
+  confidence?: number;
+  cwe?: string;
+  owasp?: string;
   cweId?: string;
   cvssScore?: number;
   codeSnippet?: string;
@@ -108,6 +141,38 @@ export interface SecurityIssue {
     before?: string[];
     after?: string[];
   };
+  examples?: {
+    vulnerable?: string;
+    secure?: string;
+  };
+  evidence?: string[];
+  hasValidation?: boolean;
+  hasSanitization?: boolean;
+  hasParameterization?: boolean;
+  hasErrorHandling?: boolean;
+  hasAuthentication?: boolean;
+  hasEncryption?: boolean;
+  riskFactors?: string[];
+  mitigatingFactors?: string[];
+  codeQualityIndicators?: string[];
+  aiAnalysis?: {
+    confidenceScore: number;
+    severityAdjustment: string;
+    adjustedSeverity: string;
+    additionalRiskFactors?: string[];
+    additionalMitigatingFactors?: string[];
+    exploitability: string;
+    businessImpact: string;
+    remediationPriority: string;
+    explanation: string;
+    recommendations?: string[];
+  };
+  ruleSource?: string;
+  detectedAt?: string;
+  exploitability?: string;
+  businessImpact?: string;
+  remediationPriority?: string;
+  aiRecommendations?: string[];
   remediation?: {
     effort: 'low' | 'medium' | 'high';
     complexity: 'simple' | 'moderate' | 'complex';
@@ -119,6 +184,49 @@ export interface SecurityIssue {
     nist?: string[];
     iso27001?: string[];
   };
+}
+
+export interface CodeSuggestion {
+  id: string;
+  issueId: string;
+  type: string;
+  language: string;
+  framework?: string;
+  severity: string;
+  title: string;
+  description: string;
+  codeExample: {
+    original: string;
+    vulnerable: string;
+    secure: string;
+    explanation: string;
+  };
+  implementationSteps: string[];
+  testingGuidance: {
+    unitTests: string;
+    integrationTests: string;
+    securityTests: string;
+    manualTesting: string;
+    regressionTests: string;
+  };
+  riskReduction: {
+    percentage: number;
+    description: string;
+  };
+  estimatedEffort: {
+    hours: number;
+    effort: string;
+    description: string;
+  };
+  relatedCWE: string;
+  owaspCategory: string;
+  file: string;
+  line: number;
+  confidence: number;
+  aiEnhanced: boolean;
+  aiInsights: string[];
+  contextualRecommendations: string[];
+  alternativeApproaches: string[];
 }
 
 export interface TechStack {
