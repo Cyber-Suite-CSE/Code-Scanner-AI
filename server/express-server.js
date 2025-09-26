@@ -420,9 +420,20 @@ app.get('/api/scan/:id/report', (req, res) => {
       });
     }
 
+    // Send the complete report with all details
     res.json({
       success: true,
-      report
+      report: {
+        ...report,
+        // Ensure all sections are included
+        metadata: report.metadata || {},
+        executionSummary: report.executionSummary || {},
+        techStackAnalysis: report.techStackAnalysis || {},
+        securityAnalysis: report.securityAnalysis || {},
+        codeSuggestions: report.codeSuggestions || {},
+        actionPlan: report.actionPlan || {},
+        appendix: report.appendix || {}
+      }
     });
   } catch (error) {
     console.error('Get report error:', error);

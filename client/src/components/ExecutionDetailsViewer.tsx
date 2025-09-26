@@ -378,7 +378,7 @@ export default function ExecutionDetailsViewer({ report }: ExecutionDetailsViewe
       )}
 
       {/* Rules Used */}
-      <div className="bg-slate-700/50 rounded-lg p-4">
+      {/* <div className="bg-slate-700/50 rounded-lg p-4">
         <h3 className="text-white font-medium mb-4 flex items-center gap-2">
           <Shield className="w-5 h-5 text-purple-400" />
           Security Rules Applied
@@ -387,7 +387,7 @@ export default function ExecutionDetailsViewer({ report }: ExecutionDetailsViewe
           <div className="text-4xl font-bold text-purple-400 mb-2">{report.appendix.rulesUsed}</div>
           <p className="text-slate-400">Total security rules applied during scan</p>
         </div>
-      </div>
+      </div> */}
     </div>
   );
 }
