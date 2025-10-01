@@ -8,6 +8,7 @@ import fs from 'fs-extra';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { WorkflowOrchestrator } from './src/core/WorkflowOrchestrator.js';
+import { AIServiceFactory } from './src/services/AIServiceFactory.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -514,6 +515,7 @@ app.get('/api/scans', (req, res) => {
 app.get('/health', async (req, res) => {
   try {
     const scannerHealth = await scanner.healthCheck();
+    const aiConfig = AIServiceFactory.getCurrentConfig();
     
     res.json({
       status: scannerHealth.status === 'healthy' ? 'healthy' : 'unhealthy',
@@ -521,6 +523,7 @@ app.get('/health', async (req, res) => {
       uptime: process.uptime(),
       activeScans: scans.size,
       activeConnections: wsClients.size,
+      aiConfiguration: aiConfig,
       scanner: scannerHealth
     });
   } catch (error) {
@@ -530,6 +533,25 @@ app.get('/health', async (req, res) => {
       uptime: process.uptime(),
       activeScans: scans.size,
       activeConnections: wsClients.size,
+      error: error.message
+    });
+  }
+});
+
+// AI configuration endpoint
+app.get('/api/ai-config', (req, res) => {
+  try {
+    const aiConfig = AIServiceFactory.getProviderInfo();
+    
+    res.json({
+      success: true,
+      configuration: aiConfig
+    });
+  } catch (error) {
+    console.error('Get AI config error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get AI configuration',
       error: error.message
     });
   }
@@ -568,6 +590,23 @@ async function startServer() {
   try {
     console.log('🚀 Starting Code Security Scanner Server...');
     
+    // Display AI configuration
+    try {
+      const aiConfig = AIServiceFactory.getCurrentConfig();
+      console.log('🤖 AI Configuration:');
+      console.log(`   Provider: ${aiConfig.provider}`);
+      console.log(`   Model: ${aiConfig.model}`);
+      console.log(`   Max Tokens: ${aiConfig.maxTokens}`);
+      console.log(`   Temperature: ${aiConfig.temperature}`);
+      console.log(`   API Key Configured: ${aiConfig.apiKeyConfigured ? '✅' : '❌'}`);
+      
+      if (!aiConfig.apiKeyConfigured) {
+        console.warn('⚠️  AI API key not configured. Please set the appropriate API key in your environment variables.');
+      }
+    } catch (error) {
+      console.error('❌ Failed to load AI configuration:', error.message);
+    }
+    
     // Initialize the scanner
     const scannerInitialized = await scanner.initialize();
     
@@ -586,6 +625,7 @@ async function startServer() {
       console.log(`   GET    /api/scan/:id/report   - Get scan report`);
       console.log(`   GET    /api/scans             - Get all scans`);
       console.log(`   GET    /reports/:filename     - Download report file`);
+      console.log(`   GET    /api/ai-config         - Get AI configuration`);
       console.log(`   GET    /health                - Health check`);
       console.log(`🔒 Scanner status: ${scannerInitialized ? 'Ready' : 'Limited mode'}`);
     });

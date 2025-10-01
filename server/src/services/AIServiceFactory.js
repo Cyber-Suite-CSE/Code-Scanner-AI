@@ -14,20 +14,31 @@ export class AIServiceFactory {
     // Get AI provider from environment variable, default to 'anthropic'
     const aiProvider = options.provider || process.env.AI_PROVIDER || 'anthropic';
     
-    console.log(`Initializing AI service with provider: ${aiProvider}`);
+    // Get model from environment or use provider default
+    const model = options.model || process.env.AI_MODEL || this.getDefaultModel(aiProvider);
+    
+    console.log(`Initializing AI service with provider: ${aiProvider}, model: ${model}`);
+    
+    // Merge environment configuration with options
+    const serviceOptions = {
+      model,
+      maxTokens: options.maxTokens || parseInt(process.env.AI_MAX_TOKENS) || 4096,
+      temperature: options.temperature || parseFloat(process.env.AI_TEMPERATURE) || 0.1,
+      ...options
+    };
     
     switch (aiProvider.toLowerCase()) {
       case 'openai':
       case 'chatgpt':
-        return new OpenAIService(options);
+        return new OpenAIService(serviceOptions);
       
       case 'anthropic':
       case 'claude':
-        return new AnthropicService(options);
+        return new AnthropicService(serviceOptions);
       
       default:
         console.warn(`Unknown AI provider: ${aiProvider}. Falling back to Anthropic.`);
-        return new AnthropicService(options);
+        return new AnthropicService(serviceOptions);
     }
   }
 
@@ -83,19 +94,25 @@ export class AIServiceFactory {
    */
   static getDefaultModel(provider = null) {
     const aiProvider = provider || process.env.AI_PROVIDER || 'anthropic';
-    return 'gpt-5-mini-2025-08-07';
-    // switch (aiProvider.toLowerCase()) {
-    //   case 'openai':
-    //   case 'chatgpt':
-    //     return 'gpt-5-mini-2025-08-07';
+    
+    // First check if AI_MODEL is explicitly set in environment
+    if (process.env.AI_MODEL) {
+      return process.env.AI_MODEL;
+    }
+    
+    // Otherwise use provider-specific defaults
+    switch (aiProvider.toLowerCase()) {
+      case 'openai':
+      case 'chatgpt':
+        return 'gpt-4-turbo-preview';
       
-    //   case 'anthropic':
-    //   case 'claude':
-    //     return 'claude-3-5-sonnet-20241022';
+      case 'anthropic':
+      case 'claude':
+        return 'claude-3-5-sonnet-20241022';
       
-    //   default:
-    //     return 'claude-3-5-sonnet-20241022';
-    // }
+      default:
+        return 'claude-3-5-sonnet-20241022';
+    }
   }
 
   /**
@@ -104,14 +121,35 @@ export class AIServiceFactory {
    */
   static getProviderInfo() {
     const aiProvider = process.env.AI_PROVIDER || 'anthropic';
+    const model = process.env.AI_MODEL || this.getDefaultModel(aiProvider);
     const validation = this.validateProviderConfig();
     
     return {
       provider: aiProvider,
+      model: model,
       defaultModel: this.getDefaultModel(aiProvider),
+      maxTokens: parseInt(process.env.AI_MAX_TOKENS) || 4096,
+      temperature: parseFloat(process.env.AI_TEMPERATURE) || 0.1,
       isConfigured: validation.success,
       error: validation.error || null,
       supportedProviders: this.getSupportedProviders()
+    };
+  }
+
+  /**
+   * Gets the current AI configuration from environment variables
+   * @returns {Object} Current configuration
+   */
+  static getCurrentConfig() {
+    const aiProvider = process.env.AI_PROVIDER || 'anthropic';
+    const model = process.env.AI_MODEL || this.getDefaultModel(aiProvider);
+    
+    return {
+      provider: aiProvider,
+      model: model,
+      maxTokens: parseInt(process.env.AI_MAX_TOKENS) || 4096,
+      temperature: parseFloat(process.env.AI_TEMPERATURE) || 0.1,
+      apiKeyConfigured: this.validateProviderConfig().success
     };
   }
 }
