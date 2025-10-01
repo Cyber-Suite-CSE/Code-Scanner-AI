@@ -143,21 +143,33 @@ export class SentinelAgent extends BaseAgent {
 
     try {
       // Step 1: Scan directory structure and get all files
+      this.log('Scanning codebase directory structure...');
+      await this.addProcessingDelay(800);
       const fileStructure = await this.scanDirectoryStructure(codebasePath);
       
       // Step 2: Identify languages based on actual file extensions and content
+      this.log('Analyzing file types and identifying programming languages...');
+      await this.addProcessingDelay(1000);
       const languages = await this.identifyLanguagesAccurately(fileStructure);
       
       // Step 3: Detect frameworks based on dependencies and code patterns
+      this.log('Detecting frameworks and technology patterns...');
+      await this.addProcessingDelay(1200);
       const frameworks = await this.detectFrameworksAccurately(fileStructure, languages);
       
       // Step 4: Identify databases and external services
+      this.log('Identifying databases and external service dependencies...');
+      await this.addProcessingDelay(700);
       const databases = await this.identifyDatabases(fileStructure);
       
       // Step 5: Find entry points
+      this.log('Mapping application entry points and API endpoints...');
+      await this.addProcessingDelay(600);
       const entryPoints = await this.findEntryPoints(fileStructure, languages);
       
       // Step 6: Generate security goals based on actual tech stack
+      this.log('Generating tailored security objectives...');
+      await this.addProcessingDelay(500);
       const goals = await this.generateSecurityGoals(languages, frameworks, databases);
 
     const result = {

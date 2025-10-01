@@ -2,7 +2,7 @@ import { EventEmitter } from 'events';
 import { ToolRegistry } from './ToolRegistry.js';
 import { VulnerabilityClassifier } from './VulnerabilityClassifier.js';
 import { ZipHandler } from './ZipHandler.js';
-import { AnthropicService } from '../services/AnthropicService.js';
+import { AIServiceFactory } from '../services/AIServiceFactory.js';
 import { SentinelAgent } from '../agents/SentinelAgent.js';
 import { GuardianAgent } from '../agents/GuardianAgent.js';
 import { InspectorAgent } from '../agents/InspectorAgent.js';
@@ -26,7 +26,7 @@ export class WorkflowOrchestrator extends EventEmitter {
     this.toolRegistry = null;
     this.vulnerabilityClassifier = null;
     this.zipHandler = null;
-    this.anthropicService = null;
+    this.aiService = null;
     this.agents = new Map();
 
     this.workflowState = {
@@ -78,34 +78,46 @@ export class WorkflowOrchestrator extends EventEmitter {
   }
 
   async initializeComponents() {
-    // Initialize Anthropic Service
-    this.anthropicService = new AnthropicService(this.options.ai || {});
+    try {
+      // Initialize AI Service (supports both Anthropic and OpenAI)
+      console.log('Initializing AI Service...');
+      this.aiService = AIServiceFactory.createAIService(this.options.ai || {});
 
-    // Test Anthropic connection
-    const connectionTest = await this.anthropicService.testConnection();
-    if (!connectionTest.success) {
-      throw new Error(`Anthropic API connection failed: ${connectionTest.error}`);
+      // Test AI service connection
+      const connectionTest = await this.aiService.testConnection();
+      if (!connectionTest.success) {
+        throw new Error(`AI service connection failed: ${connectionTest.error}`);
+      }
+      console.log(`AI service connection verified (${this.aiService.constructor.name})`);
+
+      // Initialize Tool Registry
+      console.log('Initializing Tool Registry...');
+      this.toolRegistry = new ToolRegistry(
+        path.join(this.options.configPath, 'mcp-tools.json')
+      );
+      await this.toolRegistry.initialize();
+      console.log('Tool Registry initialized');
+
+      // Initialize Vulnerability Classifier
+      console.log('Initializing Vulnerability Classifier...');
+      this.vulnerabilityClassifier = new VulnerabilityClassifier(
+        path.join(this.options.configPath, 'vulnerabilities.json')
+      );
+      await this.vulnerabilityClassifier.initialize();
+      console.log('Vulnerability Classifier initialized');
+
+      // Initialize Zip Handler
+      console.log('Initializing Zip Handler...');
+      this.zipHandler = new ZipHandler({
+        tempDir: this.options.tempPath
+      });
+      console.log('Zip Handler initialized');
+
+      console.log('Core components initialized');
+    } catch (error) {
+      console.error('Component initialization failed:', error.message);
+      throw error;
     }
-    console.log('Anthropic API connection verified');
-
-    // Initialize Tool Registry
-    this.toolRegistry = new ToolRegistry(
-      path.join(this.options.configPath, 'mcp-tools.json')
-    );
-    await this.toolRegistry.initialize();
-
-    // Initialize Vulnerability Classifier
-    this.vulnerabilityClassifier = new VulnerabilityClassifier(
-      path.join(this.options.configPath, 'vulnerabilities.json')
-    );
-    await this.vulnerabilityClassifier.initialize();
-
-    // Initialize Zip Handler
-    this.zipHandler = new ZipHandler({
-      tempDir: this.options.tempPath
-    });
-
-    console.log('Core components initialized');
   }
 
   async initializeAgents() {
@@ -120,7 +132,7 @@ export class WorkflowOrchestrator extends EventEmitter {
       try {
         const agent = new AgentClass(
           this.toolRegistry,
-          this.anthropicService,
+          this.aiService,
           this.options
         );
 
@@ -167,6 +179,22 @@ export class WorkflowOrchestrator extends EventEmitter {
 
   async executeScan(zipFilePath) {
     try {
+      // Verify initialization before starting scan
+      if (this.workflowState.status !== 'ready') {
+        throw new Error(`Workflow orchestrator not ready. Current status: ${this.workflowState.status}`);
+      }
+
+      // Double-check critical components
+      if (!this.zipHandler) {
+        throw new Error('ZipHandler not initialized');
+      }
+      if (!this.toolRegistry) {
+        throw new Error('ToolRegistry not initialized');
+      }
+      if (!this.aiService) {
+        throw new Error('AIService not initialized');
+      }
+
       this.workflowState.status = 'running';
       this.workflowState.startTime = Date.now();
       this.workflowState.currentStep = 'starting';
@@ -181,8 +209,14 @@ export class WorkflowOrchestrator extends EventEmitter {
       // Execute workflow steps
       const results = await this.executeWorkflowSteps(zipFilePath);
 
+      // Add delay before report generation
+      await this.addProcessingDelay(3000, 'Compiling comprehensive security report...');
+
       // Generate final report
       const report = await this.generateFinalReport(results);
+
+      // Add delay before saving
+      await this.addProcessingDelay(1500, 'Finalizing report and saving results...');
 
       // Save results
       const outputFile = await this.saveResults(report);
@@ -220,11 +254,19 @@ export class WorkflowOrchestrator extends EventEmitter {
     results.extraction = await this.executeStep('extraction', async () => {
       this.workflowState.currentStep = 'extraction';
 
+      // Ensure zipHandler is initialized
+      if (!this.zipHandler) {
+        throw new Error('ZipHandler not initialized. Please ensure the workflow orchestrator is properly initialized.');
+      }
+
       const extractionResult = await this.zipHandler.extractZip(zipFilePath);
       this.workflowState.metrics.totalFiles = extractionResult.totalFiles;
 
       return extractionResult;
     });
+
+    // Add delay between steps for better user experience
+    await this.addProcessingDelay(1500, 'Preparing for tech stack analysis...');
 
     // Step 2: Sentinel Agent - Identify tech stacks
     results.sentinel = await this.executeStep('sentinel', async () => {
@@ -236,6 +278,9 @@ export class WorkflowOrchestrator extends EventEmitter {
       });
     });
 
+    // Add delay between steps
+    await this.addProcessingDelay(2000, 'Analyzing detected technologies and creating security rules...');
+
     // Step 3: Guardian Agent - Create rules
     results.guardian = await this.executeStep('guardian', async () => {
       this.workflowState.currentStep = 'rule-creation';
@@ -246,6 +291,9 @@ export class WorkflowOrchestrator extends EventEmitter {
         goals: results.sentinel.goals
       });
     });
+
+    // Add delay before security analysis
+    await this.addProcessingDelay(2500, 'Preparing comprehensive security analysis...');
 
     // Step 4: Inspector Agent - Analyze code
     results.inspector = await this.executeStep('inspector', async () => {
@@ -262,6 +310,9 @@ export class WorkflowOrchestrator extends EventEmitter {
       return inspectionResult;
     });
 
+    // Add delay before vulnerability classification
+    await this.addProcessingDelay(1800, 'Classifying and prioritizing security vulnerabilities...');
+
     // Step 5: Classify vulnerabilities
     results.classification = await this.executeStep('classification', async () => {
       this.workflowState.currentStep = 'vulnerability-classification';
@@ -270,6 +321,9 @@ export class WorkflowOrchestrator extends EventEmitter {
         results.inspector.issues
       );
     });
+
+    // Add delay before suggestion generation
+    await this.addProcessingDelay(2200, 'Generating intelligent code suggestions and remediation strategies...');
 
     // Step 6: Forge Agent - Generate suggestions
     results.forge = await this.executeStep('forge', async () => {
@@ -344,49 +398,98 @@ export class WorkflowOrchestrator extends EventEmitter {
     }
   }
 
+  /**
+   * Add a processing delay with status update
+   * @param {number} delayMs - Delay in milliseconds
+   * @param {string} message - Status message to emit
+   */
+  async addProcessingDelay(delayMs, message) {
+    if (message) {
+      this.workflowState.currentStep = message;
+      this.emit('workflow-status', {
+        status: 'running',
+        step: message
+      });
+      console.log(`Processing: ${message}`);
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+
   async generateFinalReport(results) {
+    // Add delay for report metadata generation
+    await this.addProcessingDelay(800, 'Generating report metadata...');
+    
     const report = {
       metadata: {
         generatedAt: new Date().toISOString(),
         scanDuration: this.workflowState.endTime - this.workflowState.startTime,
         version: '1.0.0',
         workflow: 'security-scan'
-      },
-      executionSummary: {
-        status: 'completed',
-        stepsExecuted: Array.from(this.workflowState.results.keys()),
-        totalFiles: this.workflowState.metrics.totalFiles,
-        issuesFound: this.workflowState.metrics.issuesFound,
-        suggestionsGenerated: this.workflowState.metrics.suggestionsGenerated,
-        executionTime: this.workflowState.metrics.executionTime
-      },
-      techStackAnalysis: {
-        identifiedStacks: results.sentinel.techStacks,
-        goals: results.sentinel.goals,
-        entryPoints: results.sentinel.entryPoints
-      },
-      securityAnalysis: {
-        totalIssues: results.inspector.issues.length,
-        issuesByCategory: results.inspector.categorizedIssues,
-        riskAssessment: results.inspector.report,
-        classification: results.classification.summary
-      },
-      recommendations: {
-        suggestions: results.forge.suggestions,
-        educationalMaterial: results.forge.educationalMaterial,
-        implementationGuidance: results.forge.statistics
-      },
-      detailedFindings: {
-        vulnerabilities: results.inspector.issues,
-        classifications: results.classification.classifications,
-        secureCodeSuggestions: results.forge.suggestions.filter(s => s.type === 'code-suggestion')
-      },
-      actionPlan: this.generateActionPlan(results),
-      appendix: {
-        rulesUsed: results.guardian.ruleSet.length,
-        toolsUsed: this.getToolsUsed(),
-        agentExecutionDetails: this.getAgentExecutionDetails()
       }
+    };
+
+    // Add delay for execution summary
+    await this.addProcessingDelay(600, 'Compiling execution summary...');
+    
+    report.executionSummary = {
+      status: 'completed',
+      stepsExecuted: Array.from(this.workflowState.results.keys()),
+      totalFiles: this.workflowState.metrics.totalFiles,
+      issuesFound: this.workflowState.metrics.issuesFound,
+      suggestionsGenerated: this.workflowState.metrics.suggestionsGenerated,
+      executionTime: this.workflowState.metrics.executionTime
+    };
+
+    // Add delay for tech stack analysis
+    await this.addProcessingDelay(700, 'Processing tech stack analysis...');
+    
+    report.techStackAnalysis = {
+      identifiedStacks: results.sentinel.techStacks,
+      goals: results.sentinel.goals,
+      entryPoints: results.sentinel.entryPoints
+    };
+
+    // Add delay for security analysis
+    await this.addProcessingDelay(900, 'Analyzing security findings and risk assessment...');
+    
+    report.securityAnalysis = {
+      totalIssues: results.inspector.issues.length,
+      issuesByCategory: results.inspector.categorizedIssues,
+      riskAssessment: results.inspector.report,
+      classification: results.classification.summary
+    };
+
+    // Add delay for recommendations
+    await this.addProcessingDelay(750, 'Compiling security recommendations...');
+    
+    report.recommendations = {
+      suggestions: results.forge.suggestions,
+      educationalMaterial: results.forge.educationalMaterial,
+      implementationGuidance: results.forge.statistics
+    };
+
+    // Add delay for detailed findings
+    await this.addProcessingDelay(850, 'Processing detailed vulnerability findings...');
+    
+    report.detailedFindings = {
+      vulnerabilities: results.inspector.issues,
+      classifications: results.classification.classifications,
+      secureCodeSuggestions: results.forge.suggestions.filter(s => s.type === 'code-suggestion')
+    };
+
+    // Add delay for action plan generation
+    await this.addProcessingDelay(600, 'Generating actionable remediation plan...');
+    
+    report.actionPlan = this.generateActionPlan(results);
+
+    // Add delay for appendix
+    await this.addProcessingDelay(500, 'Compiling technical appendix...');
+    
+    report.appendix = {
+      rulesUsed: results.guardian.ruleSet.length,
+      toolsUsed: this.getToolsUsed(),
+      agentExecutionDetails: this.getAgentExecutionDetails()
     };
 
     return report;
@@ -685,6 +788,11 @@ export class WorkflowOrchestrator extends EventEmitter {
       const extraction = await this.executeStep('extraction', async () => {
         this.workflowState.currentStep = 'extraction';
 
+        // Ensure zipHandler is initialized
+        if (!this.zipHandler) {
+          throw new Error('ZipHandler not initialized. Please ensure the workflow orchestrator is properly initialized.');
+        }
+
         const extractionResult = await this.zipHandler.extractZip(zipFilePath);
         this.workflowState.metrics.totalFiles = extractionResult.totalFiles;
 
@@ -777,6 +885,11 @@ export class WorkflowOrchestrator extends EventEmitter {
       const extraction = await this.executeStep('extraction', async () => {
         this.workflowState.currentStep = 'extraction';
 
+        // Ensure zipHandler is initialized
+        if (!this.zipHandler) {
+          throw new Error('ZipHandler not initialized. Please ensure the workflow orchestrator is properly initialized.');
+        }
+
         const extractionResult = await this.zipHandler.extractZip(zipFilePath);
         this.workflowState.metrics.totalFiles = extractionResult.totalFiles;
 
@@ -852,6 +965,11 @@ export class WorkflowOrchestrator extends EventEmitter {
       // Step 1: Extract and analyze codebase
       const extraction = await this.executeStep('extraction', async () => {
         this.workflowState.currentStep = 'extraction';
+
+        // Ensure zipHandler is initialized
+        if (!this.zipHandler) {
+          throw new Error('ZipHandler not initialized. Please ensure the workflow orchestrator is properly initialized.');
+        }
 
         const extractionResult = await this.zipHandler.extractZip(zipFilePath);
         this.workflowState.metrics.totalFiles = extractionResult.totalFiles;

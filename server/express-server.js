@@ -74,13 +74,33 @@ class CodeSecurityScanner {
       // Set up event listeners for WebSocket broadcasting
       this.setupEventListeners();
       
-      // Initialize
+      // Initialize with detailed error logging
+      console.log('🔧 Initializing orchestrator components...');
       await this.orchestrator.initialize();
+      
+      // Verify initialization
+      const health = await this.orchestrator.healthCheck();
+      if (health.status !== 'healthy') {
+        console.error('❌ Scanner health check failed after initialization:', health);
+        return false;
+      }
       
       console.log('✅ Scanner initialized successfully');
       return true;
     } catch (error) {
       console.error('❌ Scanner initialization failed:', error.message);
+      console.error('Stack trace:', error.stack);
+      
+      // Clean up on failure
+      if (this.orchestrator) {
+        try {
+          await this.orchestrator.cleanup();
+        } catch (cleanupError) {
+          console.error('❌ Cleanup failed:', cleanupError.message);
+        }
+        this.orchestrator = null;
+      }
+      
       return false;
     }
   }
@@ -161,6 +181,17 @@ class CodeSecurityScanner {
   async scanCodebase(zipPath, scanId) {
     try {
       console.log(`🔍 Starting security scan: ${path.basename(zipPath)}`);
+      
+      // Check if orchestrator is initialized
+      if (!this.orchestrator) {
+        throw new Error('Security scanner not initialized');
+      }
+
+      // Check orchestrator health before scanning
+      const health = await this.orchestrator.healthCheck();
+      if (health.status !== 'healthy') {
+        throw new Error(`Scanner not ready: ${health.error || 'Health check failed'}`);
+      }
       
       // Execute scan
       const result = await this.orchestrator.executeScan(zipPath);
@@ -420,20 +451,9 @@ app.get('/api/scan/:id/report', (req, res) => {
       });
     }
 
-    // Send the complete report with all details
     res.json({
       success: true,
-      report: {
-        ...report,
-        // Ensure all sections are included
-        metadata: report.metadata || {},
-        executionSummary: report.executionSummary || {},
-        techStackAnalysis: report.techStackAnalysis || {},
-        securityAnalysis: report.securityAnalysis || {},
-        codeSuggestions: report.codeSuggestions || {},
-        actionPlan: report.actionPlan || {},
-        appendix: report.appendix || {}
-      }
+      report
     });
   } catch (error) {
     console.error('Get report error:', error);

@@ -1,11 +1,11 @@
 import { EventEmitter } from 'events';
 
 export class BaseAgent extends EventEmitter {
-  constructor(name, toolRegistry, anthropicService = null, options = {}) {
+  constructor(name, toolRegistry, aiService = null, options = {}) {
     super();
     this.name = name;
     this.toolRegistry = toolRegistry;
-    this.anthropicService = anthropicService;
+    this.aiService = aiService;
     this.options = options;
     this.status = 'idle';
     this.results = new Map();
@@ -90,8 +90,8 @@ export class BaseAgent extends EventEmitter {
   }
 
   async analyzeWithAI(code, prompt, context = {}) {
-    if (!this.anthropicService) {
-      throw new Error('Anthropic service not available for AI analysis');
+    if (!this.aiService) {
+      throw new Error('AI service not available for AI analysis');
     }
 
     try {
@@ -102,7 +102,7 @@ export class BaseAgent extends EventEmitter {
         ...context
       };
 
-      const result = await this.anthropicService.analyzeCode(code, prompt, analysisContext);
+      const result = await this.aiService.analyzeCode(code, prompt, analysisContext);
 
       this.emit('ai-analysis-used', {
         agent: this.name,
@@ -199,6 +199,14 @@ export class BaseAgent extends EventEmitter {
     console.log(`[${timestamp}] [${this.name}] [${level.toUpperCase()}] ${message}`);
 
     this.emit('log', logEntry);
+  }
+
+  /**
+   * Add a processing delay for better user experience
+   * @param {number} delayMs - Delay in milliseconds
+   */
+  async addProcessingDelay(delayMs) {
+    await new Promise(resolve => setTimeout(resolve, delayMs));
   }
 
   async parallel(tasks) {

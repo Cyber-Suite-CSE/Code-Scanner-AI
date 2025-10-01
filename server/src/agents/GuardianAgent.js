@@ -240,12 +240,25 @@ export class GuardianAgent extends BaseAgent {
 
     try {
       // Generate rules based on actual detected technologies
+      this.log('Creating language-specific security rules...');
+      await this.addProcessingDelay(1000);
       const languageRules = await this.createLanguageSpecificRules(techStacks);
+      
+      this.log('Generating framework-specific security patterns...');
+      await this.addProcessingDelay(800);
       const frameworkRules = await this.createFrameworkSpecificRules(techStacks);
+      
+      this.log('Building database security validation rules...');
+      await this.addProcessingDelay(600);
       const databaseRules = await this.createDatabaseSpecificRules(techStacks);
+      
+      this.log('Creating goal-oriented security guidelines...');
+      await this.addProcessingDelay(700);
       const goalBasedRules = await this.createGoalBasedRules(goals);
 
       // Consolidate all rules
+      this.log('Consolidating and optimizing rule set...');
+      await this.addProcessingDelay(500);
       const allRules = [
         ...languageRules,
         ...frameworkRules,

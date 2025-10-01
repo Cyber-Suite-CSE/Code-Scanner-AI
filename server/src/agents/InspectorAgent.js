@@ -91,12 +91,18 @@ export class InspectorAgent extends BaseAgent {
 
     try {
       // Organize rules by language and category for efficient scanning
+      this.log('Organizing security rules by language and category...');
+      await this.addProcessingDelay(800);
       const organizedRules = this.organizeRules(ruleSet);
       
       // Get files to scan with language detection
+      this.log('Scanning codebase and detecting file languages...');
+      await this.addProcessingDelay(1200);
       const filesToScan = await this.getFilesToScanWithLanguages(codebasePath);
       
       // Execute targeted scanning based on organized rules
+      this.log('Performing deep security analysis across multiple dimensions...');
+      await this.addProcessingDelay(1500);
       const scanTasks = [
         () => this.performTargetedScan(filesToScan, organizedRules),
         () => this.analyzeEntryPointsEnhanced(codebasePath, entryPoints, organizedRules),
@@ -106,8 +112,16 @@ export class InspectorAgent extends BaseAgent {
       const results = await this.parallel(scanTasks);
       
       // Enhanced issue consolidation and analysis
+      this.log('Consolidating and analyzing discovered security issues...');
+      await this.addProcessingDelay(1000);
       const consolidatedIssues = this.consolidateIssuesEnhanced(results.successful);
+      
+      this.log('Categorizing issues by severity and impact...');
+      await this.addProcessingDelay(600);
       const categorizedIssues = this.categorizeIssuesBySeverity(consolidatedIssues);
+      
+      this.log('Generating comprehensive security analysis report...');
+      await this.addProcessingDelay(900);
       const report = this.generateEnhancedSecurityReport(consolidatedIssues, categorizedIssues, organizedRules);
 
       const result = {

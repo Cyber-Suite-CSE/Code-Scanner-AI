@@ -115,13 +115,25 @@ export class ForgeAgent extends BaseAgent {
 
     try {
       // Process issues in batches to avoid overwhelming the system
+      this.log('Analyzing security issues for remediation patterns...');
+      await this.addProcessingDelay(1200);
+      
       const batchSize = 10;
       const suggestions = [];
       const educationalContent = [];
       const bestPractices = [];
 
+      this.log(`Processing ${issues.length} issues in batches for optimal suggestions...`);
+      await this.addProcessingDelay(800);
+
       for (let i = 0; i < issues.length; i += batchSize) {
         const batch = issues.slice(i, i + batchSize);
+        
+        // Add delay between batches for better user experience
+        if (i > 0) {
+          this.log(`Processing batch ${Math.floor(i/batchSize) + 1} of ${Math.ceil(issues.length/batchSize)}...`);
+          await this.addProcessingDelay(400);
+        }
         
         // Process each batch
         const batchResults = await this.processBatch(batch, techStacks);
@@ -131,12 +143,18 @@ export class ForgeAgent extends BaseAgent {
       }
 
       // Generate comprehensive educational material (enhanced with AI insights)
+      this.log('Generating comprehensive educational materials...');
+      await this.addProcessingDelay(600);
       const educationalMaterial = this.generateEducationalMaterial(issues, suggestions, techStacks);
       
       // Create implementation plan (enhanced with AI recommendations)
+      this.log('Creating detailed implementation roadmap...');
+      await this.addProcessingDelay(700);
       const implementationPlan = this.generateImplementationPlan(suggestions, issues);
       
       // Generate AI-enhanced security recommendations if available
+      this.log('Generating AI-enhanced security recommendations...');
+      await this.addProcessingDelay(900);
       const aiRecommendations = await this.generateAISecurityRecommendations(issues, suggestions, techStacks);
 
       const result = {
