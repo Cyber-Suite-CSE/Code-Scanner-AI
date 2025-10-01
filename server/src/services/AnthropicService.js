@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { EventEmitter } from 'events';
 import dotenv from 'dotenv';
+import { AILogger } from './AILogger.js';
 
 dotenv.config();
 
@@ -12,6 +13,7 @@ export class AnthropicService extends EventEmitter {
     this.model = options.model || process.env.AI_MODEL || 'claude-3-5-sonnet-20241022';
     this.maxTokens = options.maxTokens || parseInt(process.env.AI_MAX_TOKENS) || 4096;
     this.temperature = options.temperature || parseFloat(process.env.AI_TEMPERATURE) || 0.1;
+    this.aiLogger = options.aiLogger || null;
 
     if (!this.apiKey) {
       throw new Error('Anthropic API key is required. Set ANTHROPIC_API_KEY environment variable.');
@@ -27,11 +29,15 @@ export class AnthropicService extends EventEmitter {
   }
 
   async analyzeCode(code, prompt, context = {}) {
+    const requestStartTime = Date.now();
+    const requestId = this.generateRequestId();
+    
     try {
       this.emit('analysis-start', { prompt: prompt.substring(0, 100) });
 
       const systemPrompt = this.buildSystemPrompt(context);
       const userPrompt = this.buildUserPrompt(code, prompt, context);
+      const fullPrompt = `System: ${systemPrompt}\n\nUser: ${userPrompt}`;
 
       const response = await this.client.messages.create({
         model: this.model,
@@ -46,6 +52,9 @@ export class AnthropicService extends EventEmitter {
         ]
       });
 
+      const requestEndTime = Date.now();
+      const duration = requestEndTime - requestStartTime;
+
       this.requestCount++;
       this.totalTokens += response.usage?.input_tokens + response.usage?.output_tokens || 0;
 
@@ -56,6 +65,31 @@ export class AnthropicService extends EventEmitter {
         timestamp: new Date().toISOString()
       };
 
+      // Log AI interaction
+      if (this.aiLogger) {
+        await this.aiLogger.logAIInteraction({
+          sessionId: context.sessionId || 'unknown',
+          agent: context.agent || 'anthropic-service',
+          task: context.task || 'code-analysis',
+          purpose: this.inferPurpose(context.task),
+          provider: 'anthropic',
+          model: this.model,
+          requestId,
+          systemPrompt,
+          userPrompt,
+          fullPrompt,
+          response: response.content[0].text,
+          usage: response.usage,
+          temperature: this.temperature,
+          maxTokens: this.maxTokens,
+          requestTime: requestStartTime,
+          responseTime: requestEndTime,
+          duration,
+          finishReason: response.stop_reason,
+          context
+        });
+      }
+
       this.emit('analysis-complete', {
         tokens: response.usage?.output_tokens,
         prompt: prompt.substring(0, 100)
@@ -64,11 +98,43 @@ export class AnthropicService extends EventEmitter {
       return result;
 
     } catch (error) {
+      const requestEndTime = Date.now();
+      const duration = requestEndTime - requestStartTime;
+
       this.errors.push({
         error: error.message,
         timestamp: new Date().toISOString(),
         prompt: prompt.substring(0, 100)
       });
+
+      // Log error interaction
+      if (this.aiLogger) {
+        await this.aiLogger.logAIInteraction({
+          sessionId: context.sessionId || 'unknown',
+          agent: context.agent || 'anthropic-service',
+          task: context.task || 'code-analysis',
+          purpose: this.inferPurpose(context.task),
+          provider: 'anthropic',
+          model: this.model,
+          requestId,
+          systemPrompt: this.buildSystemPrompt(context),
+          userPrompt: this.buildUserPrompt(code, prompt, context),
+          fullPrompt: `System: ${this.buildSystemPrompt(context)}\n\nUser: ${this.buildUserPrompt(code, prompt, context)}`,
+          response: '',
+          usage: {},
+          temperature: this.temperature,
+          maxTokens: this.maxTokens,
+          requestTime: requestStartTime,
+          responseTime: requestEndTime,
+          duration,
+          error: {
+            message: error.message,
+            code: error.code,
+            type: error.type || 'api_error'
+          },
+          context
+        });
+      }
 
       this.emit('analysis-error', { error: error.message });
       throw new Error(`AI analysis failed: ${error.message}`);
@@ -389,6 +455,29 @@ Guidelines:
         error: error.message
       };
     }
+  }
+
+  generateRequestId() {
+    return `anthropic_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  inferPurpose(task) {
+    const purposeMap = {
+      'tech-stack-identification': 'Identify and analyze the technology stack used in the codebase',
+      'security-rule-generation': 'Generate security rules based on identified technologies',
+      'vulnerability-analysis': 'Analyze code snippets for security vulnerabilities',
+      'secure-code-generation': 'Generate secure code alternatives for identified vulnerabilities',
+      'vulnerability-classification': 'Classify and score security issues',
+      'documentation-analysis': 'Analyze documentation for security-relevant information',
+      'code-analysis': 'Perform general code analysis',
+      'unknown': 'Unknown AI analysis task'
+    };
+    
+    return purposeMap[task] || purposeMap['unknown'];
+  }
+
+  setAILogger(aiLogger) {
+    this.aiLogger = aiLogger;
   }
 
   reset() {

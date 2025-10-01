@@ -3,8 +3,8 @@ import fs from 'fs-extra';
 import path from 'path';
 
 export class InspectorAgent extends BaseAgent {
-  constructor(toolRegistry, anthropicService, options = {}) {
-    super('Inspector', toolRegistry, anthropicService, options);
+  constructor(toolRegistry, aiService, options = {}) {
+    super('Inspector', toolRegistry, aiService, options);
     
     this.scanResults = new Map();
     this.severityWeights = {
@@ -543,7 +543,7 @@ export class InspectorAgent extends BaseAgent {
     }
 
     // Use Anthropic AI for deeper context analysis on high-severity issues
-    if (this.anthropicService && (rule.severity === 'critical' || rule.severity === 'high')) {
+    if (this.aiService && (rule.severity === 'critical' || rule.severity === 'high')) {
       try {
         this.log(`🤖 Running AI context analysis for ${rule.severity} severity ${rule.type} in ${path.basename(fileInfo.path)}`, 'info');
         const aiAnalysis = await this.performAIContextAnalysis(fileInfo, lineContent, contextLines, rule, analysis);
@@ -560,7 +560,7 @@ export class InspectorAgent extends BaseAgent {
       } catch (error) {
         this.log(`❌ AI context analysis failed: ${error.message}`, 'warn');
       }
-    } else if (this.anthropicService) {
+    } else if (this.aiService) {
       this.log(`ℹ️ Skipping AI analysis for ${rule.severity} severity issue (only critical/high get AI analysis)`, 'info');
     }
 

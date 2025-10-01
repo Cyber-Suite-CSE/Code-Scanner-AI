@@ -3,8 +3,8 @@ import fs from 'fs-extra';
 import path from 'path';
 
 export class ForgeAgent extends BaseAgent {
-  constructor(toolRegistry, anthropicService, options = {}) {
-    super('Forge', toolRegistry, anthropicService, options);
+  constructor(toolRegistry, aiService, options = {}) {
+    super('Forge', toolRegistry, aiService, options);
     
     this.suggestionTemplates = new Map();
     this.educationalContent = new Map();
@@ -315,7 +315,7 @@ export class ForgeAgent extends BaseAgent {
       
       // Use AI for enhanced remediation suggestions on critical/high severity issues
       let aiEnhancedSuggestion = null;
-      if (this.anthropicService && (issue.severity === 'critical' || issue.severity === 'high')) {
+      if (this.aiService && (issue.severity === 'critical' || issue.severity === 'high')) {
         try {
           this.log(`🤖 Generating AI-enhanced remediation for ${issue.severity} severity ${issue.type} issue`, 'info');
           aiEnhancedSuggestion = await this.generateAIRemediationSuggestion(issue, language, framework, codePattern);
@@ -323,10 +323,10 @@ export class ForgeAgent extends BaseAgent {
         } catch (error) {
           this.log(`❌ AI remediation failed for ${issue.id}: ${error.message}`, 'warn');
         }
-      } else if (this.anthropicService) {
+      } else if (this.aiService) {
         this.log(`ℹ️ Skipping AI enhancement for ${issue.severity} severity issue (only critical/high get AI enhancement)`, 'info');
       } else {
-        this.log(`⚠️ Anthropic service not available - using template-based suggestions only`, 'warn');
+        this.log(`⚠️ AI service not available - using template-based suggestions only`, 'warn');
       }
       
       // Create comprehensive suggestion
@@ -1094,7 +1094,7 @@ Provide comprehensive remediation guidance in JSON format:
   }
 
   async generateAISecurityRecommendations(issues, suggestions, techStacks) {
-    if (!this.anthropicService) {
+    if (!this.aiService) {
       return null;
     }
 

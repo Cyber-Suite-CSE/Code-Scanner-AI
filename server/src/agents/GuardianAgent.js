@@ -3,8 +3,8 @@ import fs from 'fs-extra';
 import path from 'path';
 
 export class GuardianAgent extends BaseAgent {
-  constructor(toolRegistry, anthropicService, options = {}) {
-    super('Guardian', toolRegistry, anthropicService, options);
+  constructor(toolRegistry, aiService, options = {}) {
+    super('Guardian', toolRegistry, aiService, options);
     this.vulnerabilityConfig = null;
     
     // Comprehensive rule templates organized by technology

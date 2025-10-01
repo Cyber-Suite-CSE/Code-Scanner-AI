@@ -195,7 +195,7 @@ class CodeSecurityScanner {
       }
       
       // Execute scan
-      const result = await this.orchestrator.executeScan(zipPath);
+      const result = await this.orchestrator.executeScan(zipPath, scanId);
       
       if (result.success) {
         console.log('🎉 Security scan completed successfully!');
@@ -557,6 +557,86 @@ app.get('/api/ai-config', (req, res) => {
   }
 });
 
+// AI log statistics endpoint
+app.get('/api/ai-logs/stats', async (req, res) => {
+  try {
+    const stats = await scanner.orchestrator.getAILogStats();
+    
+    res.json({
+      success: true,
+      stats
+    });
+  } catch (error) {
+    console.error('Get AI log stats error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get AI log statistics',
+      error: error.message
+    });
+  }
+});
+
+// Search AI logs endpoint
+app.get('/api/ai-logs/search', async (req, res) => {
+  try {
+    const { query, agent, task, provider, startDate, endDate, limit } = req.query;
+    
+    const options = {
+      agent,
+      task,
+      provider,
+      startDate,
+      endDate,
+      limit: limit ? parseInt(limit) : 100
+    };
+    
+    const results = await scanner.orchestrator.searchAILogs(query, options);
+    
+    res.json({
+      success: true,
+      results,
+      count: results.length
+    });
+  } catch (error) {
+    console.error('Search AI logs error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to search AI logs',
+      error: error.message
+    });
+  }
+});
+
+// Export AI logs endpoint
+app.get('/api/ai-logs/export', async (req, res) => {
+  try {
+    const { format = 'json', agent, task, provider, startDate, endDate } = req.query;
+    
+    const options = {
+      agent,
+      task,
+      provider,
+      startDate,
+      endDate
+    };
+    
+    const exportFile = await scanner.orchestrator.exportAILogs(format, options);
+    
+    res.json({
+      success: true,
+      exportFile,
+      message: `AI logs exported to ${exportFile}`
+    });
+  } catch (error) {
+    console.error('Export AI logs error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to export AI logs',
+      error: error.message
+    });
+  }
+});
+
 // Error handling middleware
 app.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
@@ -626,6 +706,9 @@ async function startServer() {
       console.log(`   GET    /api/scans             - Get all scans`);
       console.log(`   GET    /reports/:filename     - Download report file`);
       console.log(`   GET    /api/ai-config         - Get AI configuration`);
+      console.log(`   GET    /api/ai-logs/stats     - Get AI log statistics`);
+      console.log(`   GET    /api/ai-logs/search    - Search AI logs`);
+      console.log(`   GET    /api/ai-logs/export    - Export AI logs`);
       console.log(`   GET    /health                - Health check`);
       console.log(`🔒 Scanner status: ${scannerInitialized ? 'Ready' : 'Limited mode'}`);
     });

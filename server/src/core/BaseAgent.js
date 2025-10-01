@@ -99,6 +99,8 @@ export class BaseAgent extends EventEmitter {
 
       const analysisContext = {
         agent: this.name,
+        sessionId: this.getContext('sessionId') || this.getContext('scanId') || 'unknown',
+        task: context.task || 'code-analysis',
         ...context
       };
 

@@ -3,6 +3,7 @@ import { ToolRegistry } from './ToolRegistry.js';
 import { VulnerabilityClassifier } from './VulnerabilityClassifier.js';
 import { ZipHandler } from './ZipHandler.js';
 import { AIServiceFactory } from '../services/AIServiceFactory.js';
+import { AILogger } from '../services/AILogger.js';
 import { SentinelAgent } from '../agents/SentinelAgent.js';
 import { GuardianAgent } from '../agents/GuardianAgent.js';
 import { InspectorAgent } from '../agents/InspectorAgent.js';
@@ -27,6 +28,7 @@ export class WorkflowOrchestrator extends EventEmitter {
     this.vulnerabilityClassifier = null;
     this.zipHandler = null;
     this.aiService = null;
+    this.aiLogger = null;
     this.agents = new Map();
 
     this.workflowState = {
@@ -79,9 +81,23 @@ export class WorkflowOrchestrator extends EventEmitter {
 
   async initializeComponents() {
     try {
+      // Initialize AI Logger
+      console.log('Initializing AI Logger...');
+      this.aiLogger = new AILogger({
+        outputPath: this.options.outputPath,
+        logFileName: 'ai-interactions',
+        maxLogSize: 10 * 1024 * 1024, // 10MB
+        maxLogFiles: 5
+      });
+      await this.aiLogger.initialize();
+      console.log('AI Logger initialized');
+
       // Initialize AI Service (supports both Anthropic and OpenAI)
       console.log('Initializing AI Service...');
-      this.aiService = AIServiceFactory.createAIService(this.options.ai || {});
+      this.aiService = AIServiceFactory.createAIService({
+        ...this.options.ai,
+        aiLogger: this.aiLogger
+      });
 
       // Test AI service connection
       const connectionTest = await this.aiService.testConnection();
@@ -177,7 +193,7 @@ export class WorkflowOrchestrator extends EventEmitter {
     });
   }
 
-  async executeScan(zipFilePath) {
+  async executeScan(zipFilePath, sessionId = null) {
     try {
       // Verify initialization before starting scan
       if (this.workflowState.status !== 'ready') {
@@ -195,6 +211,15 @@ export class WorkflowOrchestrator extends EventEmitter {
         throw new Error('AIService not initialized');
       }
 
+      // Generate session ID if not provided
+      const scanSessionId = sessionId || `scan_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Set session ID context for all agents
+      this.agents.forEach((agent, name) => {
+        agent.setContext('sessionId', scanSessionId);
+        agent.setContext('scanId', scanSessionId);
+      });
+
       this.workflowState.status = 'running';
       this.workflowState.startTime = Date.now();
       this.workflowState.currentStep = 'starting';
@@ -204,7 +229,7 @@ export class WorkflowOrchestrator extends EventEmitter {
         step: 'starting'
       });
 
-      console.log(`Starting security scan for: ${zipFilePath}`);
+      console.log(`Starting security scan for: ${zipFilePath} (Session: ${scanSessionId})`);
 
       // Execute workflow steps
       const results = await this.executeWorkflowSteps(zipFilePath);
@@ -709,6 +734,12 @@ export class WorkflowOrchestrator extends EventEmitter {
     try {
       console.log('Starting cleanup...');
 
+      // Cleanup AI logger
+      if (this.aiLogger) {
+        await this.aiLogger.cleanup();
+        console.log('AI Logger cleaned up');
+      }
+
       // Cleanup zip handler
       if (this.zipHandler) {
         await this.zipHandler.cleanup();
@@ -1026,6 +1057,12 @@ export class WorkflowOrchestrator extends EventEmitter {
     };
 
     try {
+      // Check AI logger
+      health.components.aiLogger = {
+        status: this.aiLogger ? 'healthy' : 'unhealthy',
+        stats: this.aiLogger ? await this.aiLogger.getLogStats() : null
+      };
+
       // Check tool registry
       health.components.toolRegistry = {
         status: this.toolRegistry?.initialized ? 'healthy' : 'unhealthy',
@@ -1064,5 +1101,29 @@ export class WorkflowOrchestrator extends EventEmitter {
       health.error = error.message;
       return health;
     }
+  }
+
+  // Get AI log statistics
+  async getAILogStats() {
+    if (!this.aiLogger) {
+      return { error: 'AI Logger not initialized' };
+    }
+    return await this.aiLogger.getLogStats();
+  }
+
+  // Search AI logs
+  async searchAILogs(query, options = {}) {
+    if (!this.aiLogger) {
+      return { error: 'AI Logger not initialized' };
+    }
+    return await this.aiLogger.searchLogs(query, options);
+  }
+
+  // Export AI logs
+  async exportAILogs(format = 'json', options = {}) {
+    if (!this.aiLogger) {
+      return { error: 'AI Logger not initialized' };
+    }
+    return await this.aiLogger.exportLogs(format, options);
   }
 }

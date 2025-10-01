@@ -3,8 +3,8 @@ import path from 'path';
 import fs from 'fs-extra';
 
 export class SentinelAgent extends BaseAgent {
-  constructor(toolRegistry, anthropicService, options = {}) {
-    super('Sentinel', toolRegistry, anthropicService, options);
+  constructor(toolRegistry, aiService, options = {}) {
+    super('Sentinel', toolRegistry, aiService, options);
     
     // Language detection patterns - more precise
     this.languagePatterns = {
