@@ -120,6 +120,33 @@ class CodeSecurityScanner {
       });
     });
 
+    this.orchestrator.on('workflow-progress', (event) => {
+      console.log(`📈 Progress: ${event.progress}% - ${event.currentStep}`);
+      
+      // Update all active scans with progress information
+      scans.forEach((scan, scanId) => {
+        if (scan.status === 'scanning') {
+          scan.progress = event.progress;
+          scan.currentStep = event.currentStep;
+          scans.set(scanId, scan);
+          broadcastScanUpdate(scanId, scan);
+        }
+      });
+      
+      // Broadcast progress updates to all connected WebSocket clients
+      this.broadcastToAllClients({
+        type: 'workflowProgress',
+        progress: event.progress,
+        currentStep: event.currentStep,
+        currentStepId: event.currentStepId,
+        stepProgress: event.stepProgress,
+        stepIndex: event.stepIndex,
+        totalSteps: event.totalSteps,
+        isComplete: event.isComplete,
+        timestamp: event.timestamp
+      });
+    });
+
     this.orchestrator.on('workflow-step-start', (event) => {
       console.log(`🚀 Starting: ${event.step}`);
       this.broadcastToAllClients({
@@ -283,6 +310,7 @@ async function executeScan(scanId, zipFilePath) {
     // Update scan status
     scan.status = 'scanning';
     scan.currentStep = 'Initializing scan...';
+    scan.progress = 0;
     scans.set(scanId, scan);
     broadcastScanUpdate(scanId, scan);
 

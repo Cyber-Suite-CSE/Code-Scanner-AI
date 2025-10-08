@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { ToolRegistry } from './ToolRegistry.js';
 import { VulnerabilityClassifier } from './VulnerabilityClassifier.js';
 import { ZipHandler } from './ZipHandler.js';
+import { ProgressTracker } from './ProgressTracker.js';
 import { AIServiceFactory } from '../services/AIServiceFactory.js';
 import { AILogger } from '../services/AILogger.js';
 import { SentinelAgent } from '../agents/SentinelAgent.js';
@@ -30,6 +31,7 @@ export class WorkflowOrchestrator extends EventEmitter {
     this.aiService = null;
     this.aiLogger = null;
     this.agents = new Map();
+    this.progressTracker = new ProgressTracker();
 
     this.workflowState = {
       status: 'idle',
@@ -224,6 +226,11 @@ export class WorkflowOrchestrator extends EventEmitter {
       this.workflowState.startTime = Date.now();
       this.workflowState.currentStep = 'starting';
 
+      // Reset and start progress tracking
+      this.progressTracker.reset();
+      this.progressTracker.setStep('initialization');
+      this.emitProgressUpdate();
+
       this.emit('workflow-status', {
         status: 'running',
         step: 'starting'
@@ -237,11 +244,19 @@ export class WorkflowOrchestrator extends EventEmitter {
       // Add delay before report generation
       await this.addProcessingDelay(3000, 'Compiling comprehensive security report...');
 
+      // Set progress for report generation
+      this.progressTracker.setStep('report-generation');
+      this.emitProgressUpdate();
+
       // Generate final report
       const report = await this.generateFinalReport(results);
 
       // Add delay before saving
       await this.addProcessingDelay(1500, 'Finalizing report and saving results...');
+
+      // Set progress for finalization
+      this.progressTracker.setStep('finalization');
+      this.emitProgressUpdate();
 
       // Save results
       const outputFile = await this.saveResults(report);
@@ -278,6 +293,8 @@ export class WorkflowOrchestrator extends EventEmitter {
     // Step 1: Extract and analyze codebase
     results.extraction = await this.executeStep('extraction', async () => {
       this.workflowState.currentStep = 'extraction';
+      this.progressTracker.setStep('extraction');
+      this.emitProgressUpdate();
 
       // Ensure zipHandler is initialized
       if (!this.zipHandler) {
@@ -286,6 +303,10 @@ export class WorkflowOrchestrator extends EventEmitter {
 
       const extractionResult = await this.zipHandler.extractZip(zipFilePath);
       this.workflowState.metrics.totalFiles = extractionResult.totalFiles;
+
+      // Simulate progress within extraction step
+      await this.progressTracker.simulateStepProgress(1000, 50);
+      this.emitProgressUpdate();
 
       return extractionResult;
     });
@@ -296,11 +317,19 @@ export class WorkflowOrchestrator extends EventEmitter {
     // Step 2: Sentinel Agent - Identify tech stacks
     results.sentinel = await this.executeStep('sentinel', async () => {
       this.workflowState.currentStep = 'tech-stack-identification';
+      this.progressTracker.setStep('tech-stack-identification');
+      this.emitProgressUpdate();
 
       const sentinelAgent = this.agents.get('sentinel');
-      return await sentinelAgent.execute({
+      const result = await sentinelAgent.execute({
         codebasePath: results.extraction.extractionPath
       });
+
+      // Simulate progress within tech stack identification
+      await this.progressTracker.simulateStepProgress(2000, 100);
+      this.emitProgressUpdate();
+
+      return result;
     });
 
     // Add delay between steps
@@ -309,12 +338,20 @@ export class WorkflowOrchestrator extends EventEmitter {
     // Step 3: Guardian Agent - Create rules
     results.guardian = await this.executeStep('guardian', async () => {
       this.workflowState.currentStep = 'rule-creation';
+      this.progressTracker.setStep('rule-creation');
+      this.emitProgressUpdate();
 
       const guardianAgent = this.agents.get('guardian');
-      return await guardianAgent.execute({
+      const result = await guardianAgent.execute({
         techStacks: results.sentinel.techStacks,
         goals: results.sentinel.goals
       });
+
+      // Simulate progress within rule creation
+      await this.progressTracker.simulateStepProgress(1500, 100);
+      this.emitProgressUpdate();
+
+      return result;
     });
 
     // Add delay before security analysis
@@ -323,6 +360,8 @@ export class WorkflowOrchestrator extends EventEmitter {
     // Step 4: Inspector Agent - Analyze code
     results.inspector = await this.executeStep('inspector', async () => {
       this.workflowState.currentStep = 'security-analysis';
+      this.progressTracker.setStep('security-analysis');
+      this.emitProgressUpdate();
 
       const inspectorAgent = this.agents.get('inspector');
       const inspectionResult = await inspectorAgent.execute({
@@ -332,6 +371,11 @@ export class WorkflowOrchestrator extends EventEmitter {
       });
 
       this.workflowState.metrics.issuesFound = inspectionResult.issues.length;
+
+      // Simulate progress within security analysis
+      await this.progressTracker.simulateStepProgress(3000, 100);
+      this.emitProgressUpdate();
+
       return inspectionResult;
     });
 
@@ -341,10 +385,18 @@ export class WorkflowOrchestrator extends EventEmitter {
     // Step 5: Classify vulnerabilities
     results.classification = await this.executeStep('classification', async () => {
       this.workflowState.currentStep = 'vulnerability-classification';
+      this.progressTracker.setStep('vulnerability-classification');
+      this.emitProgressUpdate();
 
-      return this.vulnerabilityClassifier.classifyMultipleIssues(
+      const result = this.vulnerabilityClassifier.classifyMultipleIssues(
         results.inspector.issues
       );
+
+      // Simulate progress within vulnerability classification
+      await this.progressTracker.simulateStepProgress(1000, 100);
+      this.emitProgressUpdate();
+
+      return result;
     });
 
     // Add delay before suggestion generation
@@ -353,6 +405,8 @@ export class WorkflowOrchestrator extends EventEmitter {
     // Step 6: Forge Agent - Generate suggestions
     results.forge = await this.executeStep('forge', async () => {
       this.workflowState.currentStep = 'suggestion-generation';
+      this.progressTracker.setStep('suggestion-generation');
+      this.emitProgressUpdate();
 
       const forgeAgent = this.agents.get('forge');
       const forgeResult = await forgeAgent.execute({
@@ -361,6 +415,11 @@ export class WorkflowOrchestrator extends EventEmitter {
       });
 
       this.workflowState.metrics.suggestionsGenerated = forgeResult.suggestions.length;
+
+      // Simulate progress within suggestion generation
+      await this.progressTracker.simulateStepProgress(2000, 100);
+      this.emitProgressUpdate();
+
       return forgeResult;
     });
 
@@ -421,6 +480,17 @@ export class WorkflowOrchestrator extends EventEmitter {
 
       throw error;
     }
+  }
+
+  /**
+   * Emit progress update with current step and percentage
+   */
+  emitProgressUpdate() {
+    const progressData = this.progressTracker.getProgressData();
+    this.emit('workflow-progress', {
+      ...progressData,
+      timestamp: new Date().toISOString()
+    });
   }
 
   /**

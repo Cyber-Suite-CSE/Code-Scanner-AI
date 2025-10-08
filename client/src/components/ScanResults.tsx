@@ -101,13 +101,15 @@ export default function ScanResults({ scan, onScanUpdate }: ScanResultsProps) {
           }
         };
 
-        ws.onerror = () => {
+        ws.onerror = (error) => {
           // Fallback to polling if WebSocket fails
+          // console.log(error)
           startPolling();
         };
 
       } catch (error) {
         // Fallback to polling if WebSocket connection fails
+        // console.error('WebSocket connection failed');
         startPolling();
       }
     };
@@ -173,7 +175,7 @@ export default function ScanResults({ scan, onScanUpdate }: ScanResultsProps) {
         clearInterval(pollInterval);
       }
     };
-  }, [scan.id, scan.status, report, onScanUpdate, workflowEvents]);
+  }, [scan.id, scan.status, report]);
 
   const getAgentIcon = (agentName: string) => {
     switch (agentName.toLowerCase()) {
@@ -308,7 +310,7 @@ export default function ScanResults({ scan, onScanUpdate }: ScanResultsProps) {
       </div>
 
       {/* Agent Workflow Progress */}
-      {(scan.status === 'scanning' || scan.status === 'started') && (
+      {/* {(scan.status === 'scanning' || scan.status === 'started') && (
         <div className="bg-slate-700/50 rounded-lg p-4">
           <h3 className="text-white font-medium mb-4 flex items-center gap-2">
             <Activity className="w-5 h-5" />
@@ -366,10 +368,10 @@ export default function ScanResults({ scan, onScanUpdate }: ScanResultsProps) {
             })}
           </div>
         </div>
-      )}
+      )} */}
 
       {/* Detailed Workflow Steps */}
-      {workflowEvents.length > 0 && (
+      {/* {workflowEvents.length > 0 && (
         <div className="bg-slate-700/50 rounded-lg p-4">
           <h3 className="text-white font-medium mb-4 flex items-center gap-2">
             <FileText className="w-5 h-5" />
@@ -439,7 +441,7 @@ export default function ScanResults({ scan, onScanUpdate }: ScanResultsProps) {
             </div>
           )}
         </div>
-      )}
+      )} */}
 
       {/* Summary Cards */}
       {scan.summary && (
