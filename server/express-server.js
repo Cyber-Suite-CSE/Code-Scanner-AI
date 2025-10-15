@@ -7,6 +7,7 @@ import path from 'path';
 import fs from 'fs-extra';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
+import fetch from 'node-fetch';
 import { WorkflowOrchestrator } from './src/core/WorkflowOrchestrator.js';
 import { AIServiceFactory } from './src/services/AIServiceFactory.js';
 
@@ -261,6 +262,146 @@ class CodeSecurityScanner {
 // Initialize the scanner
 const scanner = new CodeSecurityScanner();
 
+// GitHub Helper Functions
+class GitHubService {
+  static async validateRepository(token, repoUrl) {
+    try {
+      const repoInfo = this.parseGitHubUrl(repoUrl);
+      if (!repoInfo) {
+        throw new Error('Invalid GitHub repository URL');
+      }
+
+      const { owner, repo } = repoInfo;
+      
+      // Test API access to the repository
+      const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+        headers: {
+          'Authorization': `token ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'Code-Security-Scanner'
+        }
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('Invalid GitHub token or insufficient permissions');
+        } else if (response.status === 404) {
+          throw new Error('Repository not found or no access permissions');
+        } else {
+          throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+        }
+      }
+
+      const repoData = await response.json();
+      return {
+        valid: true,
+        repoInfo: {
+          owner,
+          repo,
+          fullName: repoData.full_name,
+          defaultBranch: repoData.default_branch,
+          isPrivate: repoData.private,
+          size: repoData.size
+        }
+      };
+    } catch (error) {
+      return {
+        valid: false,
+        error: error.message
+      };
+    }
+  }
+
+  static async downloadRepository(token, repoUrl, downloadPath) {
+    try {
+      const repoInfo = this.parseGitHubUrl(repoUrl);
+      if (!repoInfo) {
+        throw new Error('Invalid GitHub repository URL');
+      }
+
+      const { owner, repo } = repoInfo;
+      
+      // Get repository information to determine default branch
+      const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+        headers: {
+          'Authorization': `token ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'Code-Security-Scanner'
+        }
+      });
+
+      if (!repoResponse.ok) {
+        throw new Error(`Failed to get repository info: ${repoResponse.status}`);
+      }
+
+      const repoData = await repoResponse.json();
+      const defaultBranch = repoData.default_branch;
+
+      // Download repository as ZIP
+      const downloadUrl = `https://api.github.com/repos/${owner}/${repo}/zipball/${defaultBranch}`;
+      const response = await fetch(downloadUrl, {
+        headers: {
+          'Authorization': `token ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'Code-Security-Scanner'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to download repository: ${response.status} ${response.statusText}`);
+      }
+
+      // Ensure download directory exists
+      await fs.ensureDir(path.dirname(downloadPath));
+
+      // Save the ZIP file
+      const buffer = await response.buffer();
+      await fs.writeFile(downloadPath, buffer);
+
+      return {
+        success: true,
+        filePath: downloadPath,
+        repoInfo: {
+          owner,
+          repo,
+          branch: defaultBranch,
+          fullName: repoData.full_name
+        }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  static parseGitHubUrl(url) {
+    try {
+      // Support various GitHub URL formats
+      const patterns = [
+        /github\.com\/([^\/]+)\/([^\/]+)(?:\.git)?(?:\/.*)?$/,
+        /github\.com\/([^\/]+)\/([^\/]+)(?:\.git)?$/
+      ];
+
+      for (const pattern of patterns) {
+        const match = url.match(pattern);
+        if (match) {
+          return {
+            owner: match[1],
+            repo: match[2].replace('.git', '')
+          };
+        }
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error parsing GitHub URL:', error);
+      return null;
+    }
+  }
+}
+
 // WebSocket connection handling
 wss.on('connection', (ws) => {
   console.log('WebSocket client connected');
@@ -364,6 +505,108 @@ async function executeScan(scanId, zipFilePath) {
   }
 }
 
+// GitHub repository scan execution function
+async function executeGitHubScan(scanId, token, repoUrl, repoInfo) {
+  const scan = scans.get(scanId);
+  if (!scan) return;
+
+  try {
+    // Update scan status to downloading
+    scan.status = 'scanning';
+    scan.currentStep = 'Downloading repository...';
+    scan.progress = 10;
+    scans.set(scanId, scan);
+    broadcastScanUpdate(scanId, scan);
+
+    // Generate download path
+    const uploadDir = path.join(__dirname, 'uploads');
+    await fs.ensureDir(uploadDir);
+    const downloadPath = path.join(uploadDir, `github-${scanId}-${repoInfo.repo}.zip`);
+
+    // Download repository
+    console.log(`📥 Downloading GitHub repository: ${repoInfo.fullName}`);
+    const downloadResult = await GitHubService.downloadRepository(token, repoUrl, downloadPath);
+
+    if (!downloadResult.success) {
+      throw new Error(`Repository download failed: ${downloadResult.error}`);
+    }
+
+    // Update scan with download completion
+    scan.filePath = downloadPath;
+    scan.currentStep = 'Repository downloaded, starting security scan...';
+    scan.progress = 20;
+    scans.set(scanId, scan);
+    broadcastScanUpdate(scanId, scan);
+
+    console.log(`✅ Repository downloaded successfully: ${downloadPath}`);
+
+    // Execute the real scan using the scanner
+    const result = await scanner.scanCodebase(downloadPath, scanId);
+
+    if (result.success) {
+      // Update scan with real results
+      scan.status = 'completed';
+      scan.progress = 100;
+      scan.endTime = new Date();
+      scan.reportFile = result.outputFile;
+      scan.currentStep = 'Completed';
+      scan.summary = {
+        filesScanned: result.report.executionSummary.totalFiles,
+        issuesFound: result.report.executionSummary.issuesFound,
+        riskLevel: result.report.securityAnalysis.riskAssessment.summary.riskLevel
+      };
+
+      // Store the actual report
+      reports.set(scanId, result.report);
+      
+      scans.set(scanId, scan);
+      broadcastScanUpdate(scanId, scan);
+      
+      console.log(`✅ GitHub scan ${scanId} completed successfully`);
+    } else {
+      // Handle scan failure
+      scan.status = 'failed';
+      scan.endTime = new Date();
+      scan.currentStep = 'Failed';
+      scan.error = result.error || 'Scan failed';
+      
+      scans.set(scanId, scan);
+      broadcastScanUpdate(scanId, scan);
+      
+      console.error(`❌ GitHub scan ${scanId} failed: ${scan.error}`);
+    }
+
+    // Cleanup downloaded file
+    try {
+      await fs.unlink(downloadPath);
+      console.log(`🗑️ Cleaned up downloaded file: ${downloadPath}`);
+    } catch (cleanupError) {
+      console.warn(`⚠️ Failed to cleanup downloaded file: ${cleanupError.message}`);
+    }
+
+  } catch (error) {
+    console.error(`❌ GitHub scan ${scanId} error:`, error);
+    
+    // Update scan with error
+    scan.status = 'failed';
+    scan.endTime = new Date();
+    scan.currentStep = 'Failed';
+    scan.error = error.message;
+    
+    scans.set(scanId, scan);
+    broadcastScanUpdate(scanId, scan);
+
+    // Cleanup downloaded file if it exists
+    if (scan.filePath) {
+      try {
+        await fs.unlink(scan.filePath);
+      } catch (cleanupError) {
+        console.warn(`⚠️ Failed to cleanup file after error: ${cleanupError.message}`);
+      }
+    }
+  }
+}
+
 // API Routes
 
 // POST /api/scan - Start a new scan
@@ -404,6 +647,70 @@ app.post('/api/scan', upload.single('codebase'), async (req, res) => {
 
   } catch (error) {
     console.error('Scan start error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+// POST /api/scan/github - Start a new GitHub repository scan
+app.post('/api/scan/github', async (req, res) => {
+  try {
+    const { token, repoUrl } = req.body;
+
+    if (!token || !repoUrl) {
+      return res.status(400).json({
+        success: false,
+        message: 'GitHub token and repository URL are required'
+      });
+    }
+
+    // Validate repository access
+    console.log(`🔍 Validating GitHub repository access: ${repoUrl}`);
+    const validation = await GitHubService.validateRepository(token, repoUrl);
+    
+    if (!validation.valid) {
+      console.error(`❌ Repository validation failed: ${validation.error}`);
+      return res.status(400).json({
+        success: false,
+        message: validation.error
+      });
+    }
+
+    const scanId = uuidv4();
+    const repoInfo = validation.repoInfo;
+    
+    // Create scan entry
+    const scan = {
+      id: scanId,
+      filename: `${repoInfo.fullName} (GitHub)`,
+      filePath: null, // Will be set after download
+      status: 'started',
+      progress: 0,
+      startTime: new Date(),
+      currentStep: 'Downloading repository...',
+      githubRepo: repoInfo
+    };
+
+    // Store scan
+    scans.set(scanId, scan);
+
+    // Return response immediately
+    res.json({
+      success: true,
+      scanId,
+      repoName: repoInfo.fullName,
+      message: 'GitHub repository scan started successfully'
+    });
+
+    // Download and scan repository asynchronously
+    setTimeout(async () => {
+      await executeGitHubScan(scanId, token, repoUrl, repoInfo);
+    }, 1000);
+
+  } catch (error) {
+    console.error('GitHub scan start error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'
