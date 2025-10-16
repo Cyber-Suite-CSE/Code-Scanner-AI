@@ -92,17 +92,17 @@ export class InspectorAgent extends BaseAgent {
     try {
       // Organize rules by language and category for efficient scanning
       this.log('Organizing security rules by language and category...');
-      await this.addProcessingDelay(800);
+      await this.addProcessingDelay(50); // Reduced from 800ms
       const organizedRules = this.organizeRules(ruleSet);
       
       // Get files to scan with language detection
       this.log('Scanning codebase and detecting file languages...');
-      await this.addProcessingDelay(1200);
+      await this.addProcessingDelay(50); // Reduced from 1200ms
       const filesToScan = await this.getFilesToScanWithLanguages(codebasePath);
       
       // Execute targeted scanning based on organized rules
       this.log('Performing deep security analysis across multiple dimensions...');
-      await this.addProcessingDelay(1500);
+      await this.addProcessingDelay(50); // Reduced from 1500ms
       const scanTasks = [
         () => this.performTargetedScan(filesToScan, organizedRules),
         () => this.analyzeEntryPointsEnhanced(codebasePath, entryPoints, organizedRules),
@@ -113,15 +113,15 @@ export class InspectorAgent extends BaseAgent {
       
       // Enhanced issue consolidation and analysis
       this.log('Consolidating and analyzing discovered security issues...');
-      await this.addProcessingDelay(1000);
+      await this.addProcessingDelay(50); // Reduced from 1000ms
       const consolidatedIssues = this.consolidateIssuesEnhanced(results.successful);
       
       this.log('Categorizing issues by severity and impact...');
-      await this.addProcessingDelay(600);
+      await this.addProcessingDelay(25); // Reduced from 600ms
       const categorizedIssues = this.categorizeIssuesBySeverity(consolidatedIssues);
       
       this.log('Generating comprehensive security analysis report...');
-      await this.addProcessingDelay(900);
+      await this.addProcessingDelay(25); // Reduced from 900ms
       const report = this.generateEnhancedSecurityReport(consolidatedIssues, categorizedIssues, organizedRules);
 
       const result = {
@@ -662,11 +662,17 @@ Provide response in JSON format:
 `;
 
     try {
-      const result = await this.analyzeWithAI(contextLines.join('\n'), prompt, {
-        analysisType: 'vulnerability-context',
-        fileType: fileInfo.language,
-        vulnerabilityType: rule.type
-      });
+      // Add timeout to AI processing to prevent hanging
+      const result = await Promise.race([
+        this.analyzeWithAI(contextLines.join('\n'), prompt, {
+          analysisType: 'vulnerability-context',
+          fileType: fileInfo.language,
+          vulnerabilityType: rule.type
+        }),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('AI context analysis timeout')), 20000) // 20 second timeout
+        )
+      ]);
 
       // Parse AI response
       const aiResponse = this.parseAIResponse(result.analysis);

@@ -21,7 +21,7 @@ export class WorkflowOrchestrator extends EventEmitter {
       tempPath: './temp',
       parallel: true,
       maxRetries: 3,
-      timeout: 300000, // 5 minutes
+      timeout: 600000, // 10 minutes - increased for AI processing
       ...options
     };
 
@@ -241,8 +241,8 @@ export class WorkflowOrchestrator extends EventEmitter {
       // Execute workflow steps
       const results = await this.executeWorkflowSteps(zipFilePath);
 
-      // Add delay before report generation
-      await this.addProcessingDelay(3000, 'Compiling comprehensive security report...');
+      // Add minimal delay before report generation
+      await this.addProcessingDelay(100, 'Compiling comprehensive security report...');
 
       // Set progress for report generation
       this.progressTracker.setStep('report-generation');
@@ -251,8 +251,8 @@ export class WorkflowOrchestrator extends EventEmitter {
       // Generate final report
       const report = await this.generateFinalReport(results);
 
-      // Add delay before saving
-      await this.addProcessingDelay(1500, 'Finalizing report and saving results...');
+      // Add minimal delay before saving
+      await this.addProcessingDelay(50, 'Finalizing report and saving results...');
 
       // Set progress for finalization
       this.progressTracker.setStep('finalization');
@@ -311,8 +311,8 @@ export class WorkflowOrchestrator extends EventEmitter {
       return extractionResult;
     });
 
-    // Add delay between steps for better user experience
-    await this.addProcessingDelay(1500, 'Preparing for tech stack analysis...');
+    // Add minimal delay between steps
+    await this.addProcessingDelay(100, 'Preparing for tech stack analysis...');
 
     // Step 2: Sentinel Agent - Identify tech stacks
     results.sentinel = await this.executeStep('sentinel', async () => {
@@ -326,14 +326,14 @@ export class WorkflowOrchestrator extends EventEmitter {
       });
 
       // Simulate progress within tech stack identification
-      await this.progressTracker.simulateStepProgress(2000, 100);
+      await this.progressTracker.simulateStepProgress(200, 100);
       this.emitProgressUpdate();
 
       return result;
     });
 
-    // Add delay between steps
-    await this.addProcessingDelay(2000, 'Analyzing detected technologies and creating security rules...');
+    // Add minimal delay between steps
+    await this.addProcessingDelay(100, 'Analyzing detected technologies and creating security rules...');
 
     // Step 3: Guardian Agent - Create rules
     results.guardian = await this.executeStep('guardian', async () => {
@@ -348,14 +348,14 @@ export class WorkflowOrchestrator extends EventEmitter {
       });
 
       // Simulate progress within rule creation
-      await this.progressTracker.simulateStepProgress(1500, 100);
+      await this.progressTracker.simulateStepProgress(150, 100);
       this.emitProgressUpdate();
 
       return result;
     });
 
-    // Add delay before security analysis
-    await this.addProcessingDelay(2500, 'Preparing comprehensive security analysis...');
+    // Add minimal delay before security analysis
+    await this.addProcessingDelay(100, 'Preparing comprehensive security analysis...');
 
     // Step 4: Inspector Agent - Analyze code
     results.inspector = await this.executeStep('inspector', async () => {
@@ -373,14 +373,14 @@ export class WorkflowOrchestrator extends EventEmitter {
       this.workflowState.metrics.issuesFound = inspectionResult.issues.length;
 
       // Simulate progress within security analysis
-      await this.progressTracker.simulateStepProgress(3000, 100);
+      await this.progressTracker.simulateStepProgress(200, 100);
       this.emitProgressUpdate();
 
       return inspectionResult;
     });
 
-    // Add delay before vulnerability classification
-    await this.addProcessingDelay(1800, 'Classifying and prioritizing security vulnerabilities...');
+    // Add minimal delay before vulnerability classification
+    await this.addProcessingDelay(50, 'Classifying and prioritizing security vulnerabilities...');
 
     // Step 5: Classify vulnerabilities
     results.classification = await this.executeStep('classification', async () => {
@@ -393,14 +393,14 @@ export class WorkflowOrchestrator extends EventEmitter {
       );
 
       // Simulate progress within vulnerability classification
-      await this.progressTracker.simulateStepProgress(1000, 100);
+      await this.progressTracker.simulateStepProgress(100, 100);
       this.emitProgressUpdate();
 
       return result;
     });
 
-    // Add delay before suggestion generation
-    await this.addProcessingDelay(2200, 'Generating intelligent code suggestions and remediation strategies...');
+    // Add minimal delay before suggestion generation
+    await this.addProcessingDelay(100, 'Generating intelligent code suggestions and remediation strategies...');
 
     // Step 6: Forge Agent - Generate suggestions
     results.forge = await this.executeStep('forge', async () => {
@@ -417,7 +417,7 @@ export class WorkflowOrchestrator extends EventEmitter {
       this.workflowState.metrics.suggestionsGenerated = forgeResult.suggestions.length;
 
       // Simulate progress within suggestion generation
-      await this.progressTracker.simulateStepProgress(2000, 100);
+      await this.progressTracker.simulateStepProgress(150, 100);
       this.emitProgressUpdate();
 
       return forgeResult;
@@ -512,8 +512,8 @@ export class WorkflowOrchestrator extends EventEmitter {
   }
 
   async generateFinalReport(results) {
-    // Add delay for report metadata generation
-    await this.addProcessingDelay(800, 'Generating report metadata...');
+    // Generate report metadata
+    await this.addProcessingDelay(25, 'Generating report metadata...');
     
     const report = {
       metadata: {
@@ -524,8 +524,8 @@ export class WorkflowOrchestrator extends EventEmitter {
       }
     };
 
-    // Add delay for execution summary
-    await this.addProcessingDelay(600, 'Compiling execution summary...');
+    // Compile execution summary
+    await this.addProcessingDelay(25, 'Compiling execution summary...');
     
     report.executionSummary = {
       status: 'completed',
@@ -536,8 +536,8 @@ export class WorkflowOrchestrator extends EventEmitter {
       executionTime: this.workflowState.metrics.executionTime
     };
 
-    // Add delay for tech stack analysis
-    await this.addProcessingDelay(700, 'Processing tech stack analysis...');
+    // Process tech stack analysis
+    await this.addProcessingDelay(25, 'Processing tech stack analysis...');
     
     report.techStackAnalysis = {
       identifiedStacks: results.sentinel.techStacks,
@@ -545,8 +545,8 @@ export class WorkflowOrchestrator extends EventEmitter {
       entryPoints: results.sentinel.entryPoints
     };
 
-    // Add delay for security analysis
-    await this.addProcessingDelay(900, 'Analyzing security findings and risk assessment...');
+    // Analyze security findings
+    await this.addProcessingDelay(25, 'Analyzing security findings and risk assessment...');
     
     report.securityAnalysis = {
       totalIssues: results.inspector.issues.length,
@@ -555,8 +555,8 @@ export class WorkflowOrchestrator extends EventEmitter {
       classification: results.classification.summary
     };
 
-    // Add delay for recommendations
-    await this.addProcessingDelay(750, 'Compiling security recommendations...');
+    // Compile recommendations
+    await this.addProcessingDelay(25, 'Compiling security recommendations...');
     
     report.recommendations = {
       suggestions: results.forge.suggestions,
@@ -564,8 +564,8 @@ export class WorkflowOrchestrator extends EventEmitter {
       implementationGuidance: results.forge.statistics
     };
 
-    // Add delay for detailed findings
-    await this.addProcessingDelay(850, 'Processing detailed vulnerability findings...');
+    // Process detailed findings
+    await this.addProcessingDelay(25, 'Processing detailed vulnerability findings...');
     
     report.detailedFindings = {
       vulnerabilities: results.inspector.issues,
@@ -573,13 +573,13 @@ export class WorkflowOrchestrator extends EventEmitter {
       secureCodeSuggestions: results.forge.suggestions.filter(s => s.type === 'code-suggestion')
     };
 
-    // Add delay for action plan generation
-    await this.addProcessingDelay(600, 'Generating actionable remediation plan...');
+    // Generate action plan
+    await this.addProcessingDelay(25, 'Generating actionable remediation plan...');
     
     report.actionPlan = this.generateActionPlan(results);
 
-    // Add delay for appendix
-    await this.addProcessingDelay(500, 'Compiling technical appendix...');
+    // Compile appendix
+    await this.addProcessingDelay(25, 'Compiling technical appendix...');
     
     report.appendix = {
       rulesUsed: results.guardian.ruleSet.length,

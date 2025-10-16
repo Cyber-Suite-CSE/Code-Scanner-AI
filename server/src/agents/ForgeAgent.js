@@ -116,23 +116,23 @@ export class ForgeAgent extends BaseAgent {
     try {
       // Process issues in batches to avoid overwhelming the system
       this.log('Analyzing security issues for remediation patterns...');
-      await this.addProcessingDelay(1200);
+      await this.addProcessingDelay(100); // Reduced from 480ms
       
-      const batchSize = 10;
+      const batchSize = 15; // Increased batch size from 10
       const suggestions = [];
       const educationalContent = [];
       const bestPractices = [];
 
       this.log(`Processing ${issues.length} issues in batches for optimal suggestions...`);
-      await this.addProcessingDelay(800);
+      await this.addProcessingDelay(50); // Reduced from 320ms
 
       for (let i = 0; i < issues.length; i += batchSize) {
         const batch = issues.slice(i, i + batchSize);
         
-        // Add delay between batches for better user experience
+        // Add minimal delay between batches
         if (i > 0) {
           this.log(`Processing batch ${Math.floor(i/batchSize) + 1} of ${Math.ceil(issues.length/batchSize)}...`);
-          await this.addProcessingDelay(400);
+          await this.addProcessingDelay(25); // Reduced from 160ms
         }
         
         // Process each batch
@@ -144,17 +144,17 @@ export class ForgeAgent extends BaseAgent {
 
       // Generate comprehensive educational material (enhanced with AI insights)
       this.log('Generating comprehensive educational materials...');
-      await this.addProcessingDelay(600);
+      await this.addProcessingDelay(50); // Reduced from 240ms
       const educationalMaterial = this.generateEducationalMaterial(issues, suggestions, techStacks);
       
       // Create implementation plan (enhanced with AI recommendations)
       this.log('Creating detailed implementation roadmap...');
-      await this.addProcessingDelay(700);
+      await this.addProcessingDelay(50); // Reduced from 280ms
       const implementationPlan = this.generateImplementationPlan(suggestions, issues);
       
       // Generate AI-enhanced security recommendations if available
       this.log('Generating AI-enhanced security recommendations...');
-      await this.addProcessingDelay(900);
+      await this.addProcessingDelay(100); // Reduced from 360ms
       const aiRecommendations = await this.generateAISecurityRecommendations(issues, suggestions, techStacks);
 
       const result = {
@@ -274,32 +274,38 @@ export class ForgeAgent extends BaseAgent {
       return (severityOrder[b.severity] || 0) - (severityOrder[a.severity] || 0);
     });
 
-    for (const issue of prioritizedIssues) {
+    // Process issues in parallel for better performance
+    const processPromises = prioritizedIssues.map(async (issue) => {
       try {
         // Generate code suggestion (now with AI enhancement for critical/high)
         const suggestion = await this.createSecureSuggestion(issue, techStacks);
-        if (suggestion) {
-          suggestions.push(suggestion);
-        }
-
+        
         // Generate educational content for unique issue types
         const educationalItem = this.createEducationalItem(issue);
-        if (educationalItem) {
-          educational.push(educationalItem);
-        }
-
+        
         // Generate best practice recommendations
         const practice = this.createBestPractice(issue, techStacks);
-        if (practice) {
-          practices.push(practice);
-        }
 
+        return {
+          suggestion: suggestion || null,
+          educational: educationalItem || null,
+          practice: practice || null
+        };
       } catch (error) {
         this.log(`Failed to process issue ${issue.id || 'unknown'}: ${error.message}`, 'warn');
-        // Continue processing other issues instead of failing completely
-        continue;
+        return { suggestion: null, educational: null, practice: null };
       }
-    }
+    });
+
+    // Wait for all processing to complete
+    const results = await Promise.all(processPromises);
+
+    // Collect results
+    results.forEach(result => {
+      if (result.suggestion) suggestions.push(result.suggestion);
+      if (result.educational) educational.push(result.educational);
+      if (result.practice) practices.push(result.practice);
+    });
 
     return { suggestions, educational, practices };
   }
@@ -318,10 +324,17 @@ export class ForgeAgent extends BaseAgent {
       if (this.aiService && (issue.severity === 'critical' || issue.severity === 'high')) {
         try {
           this.log(`🤖 Generating AI-enhanced remediation for ${issue.severity} severity ${issue.type} issue`, 'info');
-          aiEnhancedSuggestion = await this.generateAIRemediationSuggestion(issue, language, framework, codePattern);
+          // Add timeout to AI processing to prevent hanging
+          aiEnhancedSuggestion = await Promise.race([
+            this.generateAIRemediationSuggestion(issue, language, framework, codePattern),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('AI processing timeout')), 30000) // 30 second timeout
+            )
+          ]);
           this.log(`✅ AI enhancement completed for issue ${issue.id}`, 'info');
         } catch (error) {
           this.log(`❌ AI remediation failed for ${issue.id}: ${error.message}`, 'warn');
+          // Continue with template-based suggestion if AI fails
         }
       } else if (this.aiService) {
         this.log(`ℹ️ Skipping AI enhancement for ${issue.severity} severity issue (only critical/high get AI enhancement)`, 'info');
@@ -1186,11 +1199,17 @@ Provide strategic security recommendations in JSON format:
 }
 `;
 
-      const result = await this.analyzeWithAI('', prompt, {
-        analysisType: 'strategic-security-recommendations',
-        issueCount: issues.length,
-        languages: Object.keys(languageBreakdown)
-      });
+      // Add timeout to AI processing to prevent hanging
+      const result = await Promise.race([
+        this.analyzeWithAI('', prompt, {
+          analysisType: 'strategic-security-recommendations',
+          issueCount: issues.length,
+          languages: Object.keys(languageBreakdown)
+        }),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('AI recommendations timeout')), 45000) // 45 second timeout
+        )
+      ]);
 
       return this.parseAIRecommendationsResponse(result.analysis);
 
