@@ -5,7 +5,12 @@ An intelligent security analysis tool that uses a multi-agent AI system to scan 
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
+
 ![Code Scanner Design](assets/CodeScannerDesign.png)
+
+## 🎬 Demo
+
+Watch the demo video: [Code Scanner AI Demo](https://drive.google.com/file/d/1hTy0q5TNar47Au9ziIetiwR45TxnLEWV/view?usp=sharing)
 
 ---
 
