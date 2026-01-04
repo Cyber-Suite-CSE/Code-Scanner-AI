@@ -2,13 +2,22 @@
 
 An intelligent security analysis tool that uses a multi-agent AI system to scan codebases for security vulnerabilities, missing controls, and best practice violations.
 
-[![GitHub](https://img.shields.io/badge/GitHub-kavienanj%2Fcode--scanner--ai-blue?logo=github)](https://github.com/kavienanj/code-scanner-ai)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)
 ![AI Powered](https://img.shields.io/badge/AI-Claude%20%7C%20GPT-purple)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 ![Code Scanner Design](assets/CodeScannerDesign.png)
+
+---
+
+## Contributors
+
+**Kavienan J** ([@kavienanj](https://github.com/kavienanj))
+**Maathavan N** ([@MaathavanJkr](https://github.com/MaathavanJkr))
+**Rusiru M** ([@RusiruSadathana](https://github.com/RusiruSadathana))
+
+---
 
 ## Features
 
@@ -308,12 +317,6 @@ src/
 
 ---
 
-## Maintainer
-
-**Kavienan J** ([@kavienanj](https://github.com/kavienanj))
-
----
-
 ## License
 
 This project is open source and available under the [MIT License](LICENSE).
@@ -329,9 +332,3 @@ Contributions are welcome! Please open an issue or submit a pull request on [Git
 3. Commit your changes (`git commit -m 'Add some amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
-
----
-
-## ⭐ Star History
-
-If you find this project useful, please consider giving it a star on [GitHub](https://github.com/kavienanj/code-scanner-ai)!

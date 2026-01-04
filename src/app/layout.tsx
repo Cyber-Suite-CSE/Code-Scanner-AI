@@ -16,7 +16,7 @@ export const metadata: Metadata = {
   title: "Code Scanner AI - Intelligent Security Analysis",
   description: "AI-powered security analysis tool that scans codebases for vulnerabilities, missing controls, and best practice violations using multi-agent architecture.",
   keywords: ["security", "code analysis", "vulnerability scanner", "AI", "OWASP", "security audit"],
-  authors: [{ name: "Kavienan J", url: "https://github.com/kavienanj" }],
+  authors: [{ name: "Cyber Suite", url: "https://cse.uom.lk" }],
   openGraph: {
     title: "Code Scanner AI",
     description: "AI-powered security analysis for your codebase",
