@@ -21,7 +21,7 @@ export const metadata: Metadata = {
     title: "Code Scanner AI",
     description: "AI-powered security analysis for your codebase",
     type: "website",
-    url: "https://github.com/kavienanj/code-scanner-ai",
+    url: "https://github.com/Cyber-Suite-CSE/Code-Scanner-AI",
   },
   twitter: {
     card: "summary_large_image",

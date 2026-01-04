@@ -4,9 +4,7 @@ An intelligent security analysis tool that uses a multi-agent AI system to scan 
 
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)
-![AI Powered](https://img.shields.io/badge/AI-Claude%20%7C%20GPT-purple)
 ![License](https://img.shields.io/badge/License-MIT-green)
-
 ![Code Scanner Design](assets/CodeScannerDesign.png)
 
 ---
@@ -50,7 +48,7 @@ An intelligent security analysis tool that uses a multi-agent AI system to scan 
 
 ```bash
 # Clone the repository
-git clone https://github.com/kavienanj/code-scanner-ai.git
+git clone https://github.com/Cyber-Suite-CSE/Code-Scanner-AI.git
 cd code-scanner-ai
 
 # Install dependencies
@@ -325,7 +323,7 @@ This project is open source and available under the [MIT License](LICENSE).
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or submit a pull request on [GitHub](https://github.com/kavienanj/code-scanner-ai).
+Contributions are welcome! Please open an issue or submit a pull request on [GitHub](https://github.com/Cyber-Suite-CSE/Code-Scanner-AI).
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)

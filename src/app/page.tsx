@@ -174,7 +174,7 @@ export default function Home() {
         <p className="mt-6 text-center text-sm text-zinc-500 dark:text-zinc-400">
           Your code is analyzed securely and never stored permanently •{" "}
           <a
-            href="https://github.com/kavienanj/code-scanner-ai"
+            href="https://github.com/Cyber-Suite-CSE/Code-Scanner-AI"
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:text-zinc-700 dark:hover:text-zinc-300"
