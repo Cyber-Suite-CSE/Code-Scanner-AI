@@ -11,9 +11,9 @@ An intelligent security analysis tool that uses a multi-agent AI system to scan 
 
 ## Contributors
 
-**Kavienan J** ([@kavienanj](https://github.com/kavienanj))
-**Maathavan N** ([@MaathavanJkr](https://github.com/MaathavanJkr))
-**Rusiru M** ([@RusiruSadathana](https://github.com/RusiruSadathana))
+- **Kavienan J** ([@kavienanj](https://github.com/kavienanj))
+- **Maathavan N** ([@MaathavanJkr](https://github.com/MaathavanJkr))
+- **Rusiru M** ([@RusiruSadathana](https://github.com/RusiruSadathana))
 
 ---
 
