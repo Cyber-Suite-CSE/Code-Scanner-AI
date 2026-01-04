@@ -2,6 +2,7 @@ import { generateText, DEFAULT_MODEL } from "../generate-text";
 import { FileEntry } from "../code-cleaner";
 import { promises as fs } from "fs";
 import path from "path";
+import { extractFirstJson } from "../utils";
 
 // ============================================================================
 // Configuration & Constants
@@ -55,11 +56,11 @@ Before returning {"status": "not_found"}, you MUST verify that you have checked 
 Multiple endpoints can be defined in the SAME file.
 If you're unsure, request to read a potential entry file again to check for additional endpoints.
 
-## Response Format:
+## Response Format (Choose only ONE output per response out of these):
 
-You MUST respond with valid JSON in one of these formats:
+You MUST respond with valid JSON in ONE of these formats:
 
-### Pick a file to look for endpoint that hasn't been processed yet:
+### 1. Pick a file to look for endpoint that hasn't been processed yet:
 \`\`\`json
 {
   "status": "pick_endpoint",
@@ -67,7 +68,7 @@ You MUST respond with valid JSON in one of these formats:
 }
 \`\`\`
 
-### When tracing an endpoint (need more files):
+### 2. When tracing an endpoint (need more files):
 \`\`\`json
 {
   "status": "tracing_endpoint",
@@ -77,7 +78,7 @@ You MUST respond with valid JSON in one of these formats:
 }
 \`\`\`
 
-### When endpoint tracing is complete:
+### 3. When endpoint tracing is complete:
 \`\`\`json
 {
   "status": "completed",
@@ -93,7 +94,7 @@ You MUST respond with valid JSON in one of these formats:
 }
 \`\`\`
 
-### After checking all possible entry points and finding no new endpoints:
+### 4. After checking all possible entry points and finding no new endpoints:
 \`\`\`json
 {
   "status": "not_found"
@@ -287,14 +288,15 @@ function findFileContent(files: FileEntry[], filePath: string): string | null {
  * Parse the agent's JSON response
  */
 function parseAgentResponse(text: string): SentinelAgentResponse {
-  // Try to extract JSON from the response
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
+  // Extract only the first complete JSON object
+  const jsonString = extractFirstJson(text);
+
+  if (!jsonString) {
     throw new Error("No JSON found in agent response");
   }
 
   try {
-    const parsed = JSON.parse(jsonMatch[0]);
+    const parsed = JSON.parse(jsonString);
 
     // Validate the response structure
     if (!parsed.status) {
@@ -453,8 +455,6 @@ export class SentinelAgent {
         abortSignal: this.abortSignal,
       });
 
-      conversationHistory.push({ role: "assistant", content: text });
-
       // Parse the response
       let response: SentinelAgentResponse;
       try {
@@ -467,6 +467,8 @@ export class SentinelAgent {
         conversationHistory = conversationHistory.slice(0, -1);
         continue;
       }
+
+      conversationHistory.push({ role: "assistant", content: JSON.stringify(response) });
 
       // Handle the response based on status
       switch (response.status) {

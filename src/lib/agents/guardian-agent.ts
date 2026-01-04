@@ -2,6 +2,7 @@ import { generateText, DEFAULT_MODEL } from "../generate-text";
 import { promises as fs } from "fs";
 import path from "path";
 import { FrameworkDetectionResult } from "../code-cleaner";
+import { extractFirstJson } from "../utils";
 
 // ============================================================================
 // Configuration & Constants
@@ -239,13 +240,13 @@ async function saveGuardianDebugOutput(output: GuardianDebugOutput): Promise<str
  */
 function parseGuardianResponse(text: string): GuardianAgentResponse {
   // Try to extract JSON from the response
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  const jsonMatch = extractFirstJson(text);
   if (!jsonMatch) {
     throw new Error("No JSON found in agent response");
   }
 
   try {
-    const parsed = JSON.parse(jsonMatch[0]);
+    const parsed = JSON.parse(jsonMatch);
 
     // Validate the response structure
     if (!parsed.status) {
@@ -436,10 +437,10 @@ export class GuardianAgent {
           abortSignal: this.abortSignal,
         });
 
-        conversationHistory.push({ role: "assistant", content: text });
-
         // Parse the response
         const response = parseGuardianResponse(text);
+        
+        conversationHistory.push({ role: "assistant", content: JSON.stringify(response) });
 
         if (response.status === "completed") {
           success = true;

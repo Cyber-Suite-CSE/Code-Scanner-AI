@@ -3,6 +3,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { EndpointProfile } from "./sentinel-agent";
 import { SecurityChecklist, SecurityControl } from "./guardian-agent";
+import { extractFirstJson } from "../utils";
 
 // ============================================================================
 // Configuration & Constants
@@ -320,13 +321,13 @@ async function saveInspectorDebugOutput(output: InspectorDebugOutput): Promise<s
  */
 function parseInspectorResponse(text: string): InspectorAgentResponse {
   // Try to extract JSON from the response
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  const jsonMatch = extractFirstJson(text);
   if (!jsonMatch) {
     throw new Error("No JSON found in agent response");
   }
 
   try {
-    const parsed = JSON.parse(jsonMatch[0]);
+    const parsed = JSON.parse(jsonMatch);
 
     // Validate the response structure
     if (!parsed.status) {
@@ -530,11 +531,11 @@ export class InspectorAgent {
           messages: conversationHistory,
           abortSignal: this.abortSignal,
         });
-
-        conversationHistory.push({ role: "assistant", content: text });
-
+        
         // Parse the response
         const response = parseInspectorResponse(text);
+
+        conversationHistory.push({ role: "assistant", content: JSON.stringify(response) });
 
         if (response.status === "completed") {
           // Record analysis history
