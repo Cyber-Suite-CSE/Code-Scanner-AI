@@ -34,6 +34,12 @@ Watch the demo video: [Code Scanner AI Demo](https://drive.google.com/file/d/1hT
 ## Table of Contents
 
 - [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Environment Setup](#environment-setup)
+  - [Running the Application](#running-the-application)
+    - [Development Mode](#development-mode)
+    - [Docker Deployment](#docker-deployment)
 - [Upload Methods](#upload-methods)
 - [Preprocessing](#preprocessing)
 - [Analysis Agents](#analysis-agents)
@@ -45,9 +51,10 @@ Watch the demo video: [Code Scanner AI Demo](https://drive.google.com/file/d/1hT
 
 ### Prerequisites
 
-- Node.js 18+
-- pnpm (recommended) or npm
+- Node.js 18+ (for local development)
+- pnpm (recommended) or npm (for local development)
 - OpenAI API key or Anthropic API key
+- **Docker & Docker Compose (optional, for containerized deployment)**
 
 ### Installation
 
@@ -78,6 +85,8 @@ ANTHROPIC_API_KEY=sk-ant-your-anthropic-key
 
 ### Running the Application
 
+#### Development Mode
+
 ```bash
 # Development mode
 pnpm dev
@@ -88,6 +97,84 @@ pnpm start
 ```
 
 Visit `http://localhost:3000` to access the application.
+
+#### Docker Deployment
+
+**Using Docker Compose (Recommended)**
+
+The easiest way to run the entire application with both frontend and API services:
+
+```bash
+# Ensure .env file is configured with your API keys
+cp .env.example .env
+# Edit .env with your actual API keys
+
+# Build and start all services
+docker-compose up --build
+
+# Or run in background
+docker-compose up --build -d
+
+# View logs
+docker-compose logs -f
+
+# Stop all services
+docker-compose down
+```
+
+This will start:
+- Frontend on `http://localhost:3000`
+- API on `http://localhost:3001`
+
+**Building Individual Docker Images**
+
+Build and run API service separately:
+
+```bash
+# Build API image
+docker build -f Dockerfile.api -t code-scanner-api \
+  --build-arg DEFAULT_MODEL=gpt-4.1-nano-2025-04-14 \
+  --build-arg NEXT_PUBLIC_FRONTEND_URL=http://localhost:3000 .
+
+# Run API container
+docker run -p 3001:3000 \
+  -e OPENAI_API_KEY=your-key-here \
+  -e ANTHROPIC_API_KEY=your-key-here \
+  code-scanner-api
+```
+
+Build and run frontend service separately:
+
+```bash
+# Build frontend image
+docker build -f Dockerfile.frontend -t code-scanner-frontend \
+  --build-arg NEXT_PUBLIC_API_URL=http://localhost:3001 .
+
+# Run frontend container
+docker run -p 3000:3000 code-scanner-frontend
+```
+
+**Docker Configuration**
+
+Environment variables can be configured in `.env` file:
+
+```env
+# AI Model Configuration
+DEFAULT_MODEL=gpt-4.1-nano-2025-04-14
+
+# API Keys (passed only at runtime, not baked into images)
+OPENAI_API_KEY=sk-your-openai-key
+ANTHROPIC_API_KEY=sk-ant-your-anthropic-key
+
+# Frontend URL for CORS (production only)
+NEXT_PUBLIC_FRONTEND_URL=https://your-frontend-domain.com
+```
+
+**Security Notes:**
+- API keys are only passed at runtime via environment variables
+- Sensitive credentials are never baked into Docker images
+- All containers run as non-root users
+- Multi-stage builds minimize image size and attack surface
 
 ---
 
@@ -268,11 +355,18 @@ Raw analysis outputs are saved to `/output/` for debugging:
 
 ### Environment Variables
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `DEFAULT_MODEL` | AI model to use | Yes |
-| `OPENAI_API_KEY` | OpenAI API key | If using GPT models |
-| `ANTHROPIC_API_KEY` | Anthropic API key | If using Claude models |
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `DEFAULT_MODEL` | AI model to use | Yes | `gpt-4.1-nano-2025-04-14` |
+| `OPENAI_API_KEY` | OpenAI API key | If using GPT models | - |
+| `ANTHROPIC_API_KEY` | Anthropic API key | If using Claude models | - |
+| `NEXT_PUBLIC_API_URL` | API URL for frontend (build-time) | No | `http://localhost:3001` |
+| `NEXT_PUBLIC_FRONTEND_URL` | Frontend URL for CORS | No | `http://localhost:3000` |
+
+**Configuration Methods:**
+- **Development**: Edit `.env` file in project root
+- **Docker**: Variables read from `.env` file automatically by docker-compose
+- **Production**: Set environment variables in your hosting platform
 
 ### Supported Models
 

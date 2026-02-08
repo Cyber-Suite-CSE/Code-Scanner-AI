@@ -15,6 +15,7 @@ import {
   ResultsCard,
   SecurityReportsSection,
 } from "@/components/task";
+import { getApiUrl } from "@/lib/api-url";
 
 export default function TaskPage() {
   const params = useParams();
@@ -39,7 +40,7 @@ export default function TaskPage() {
   useEffect(() => {
     if (!taskId) return;
 
-    const eventSource = new EventSource(`/api/analyze/${taskId}/stream`);
+    const eventSource = new EventSource(getApiUrl(`/api/analyze/${taskId}/stream`));
     eventSourceRef.current = eventSource;
 
     eventSource.onopen = () => {
@@ -87,7 +88,7 @@ export default function TaskPage() {
 
     setIsCancelling(true);
     try {
-      const response = await fetch(`/api/analyze/${taskId}/cancel`, {
+      const response = await fetch(getApiUrl(`/api/analyze/${taskId}/cancel`), {
         method: "POST",
       });
 

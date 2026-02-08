@@ -11,6 +11,7 @@ import {
   GitHubRepoTab,
   ApiResponse,
 } from "@/components/upload";
+import { getApiUrl } from "@/lib/api-url";
 
 export default function Home() {
   const router = useRouter();
@@ -28,7 +29,7 @@ export default function Home() {
       const formData = new FormData();
       formData.append("file", file);
 
-      const response = await fetch("/api/upload-zip", {
+      const response = await fetch(getApiUrl("/api/upload-zip"), {
         method: "POST",
         body: formData,
       });
@@ -53,7 +54,7 @@ export default function Home() {
     setResult(null);
 
     try {
-      const response = await fetch("/api/fetch-repo", {
+      const response = await fetch(getApiUrl("/api/fetch-repo"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -90,7 +91,7 @@ export default function Home() {
     setError(null);
 
     try {
-      const response = await fetch("/api/analyze", {
+      const response = await fetch(getApiUrl("/api/analyze"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
