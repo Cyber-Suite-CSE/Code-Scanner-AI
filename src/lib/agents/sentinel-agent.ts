@@ -1,5 +1,5 @@
 import { generateText, DEFAULT_MODEL } from "../generate-text";
-import { FileEntry } from "../code-cleaner";
+import { FileEntry } from "../code-cleaner/types";
 import { promises as fs } from "fs";
 import path from "path";
 import { extractFirstJson } from "../utils";

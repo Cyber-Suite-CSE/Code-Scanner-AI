@@ -1,7 +1,7 @@
 import { generateText, DEFAULT_MODEL } from "../generate-text";
 import { promises as fs } from "fs";
 import path from "path";
-import { FrameworkDetectionResult } from "../code-cleaner";
+import { FrameworkDetectionResult } from "../code-cleaner/types";
 import { extractFirstJson } from "../utils";
 
 // ============================================================================

@@ -1,7 +1,5 @@
-// Common exports
 export { DEFAULT_MODEL } from "../generate-text";
 
-// Sentinel Agent exports
 export {
   // Agent class and factory
   SentinelAgent,
@@ -25,7 +23,6 @@ export {
   type SentinelDebugOutput,
 } from "./sentinel-agent";
 
-// Guardian Agent exports
 export {
   // Agent class and factory
   GuardianAgent,
@@ -48,7 +45,6 @@ export {
   type GuardianDebugOutput,
 } from "./guardian-agent";
 
-// Inspector Agent exports
 export {
   // Agent class and factory
   InspectorAgent,

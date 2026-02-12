@@ -1,5 +1,7 @@
-import { FileEntry, FrameworkDetectionResult } from "./code-cleaner";
-import { EndpointProfile, SecurityChecklist, SecurityReport } from "./agents";
+import { FrameworkDetectionResult } from "./code-cleaner/types";
+import { EndpointProfile } from "./agents/sentinel-agent";
+import { SecurityChecklist } from "./agents/guardian-agent";
+import { SecurityReport } from "./agents/inspector-agent";
 
 export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
 
@@ -11,8 +13,8 @@ export interface JobEvent {
 
 export interface LogEntry {
   timestamp: number;
-  level: "info" | "warn" | "error" | "success";
   message: string;
+  level: "info" | "error" | "warning";
 }
 
 export interface AnalysisResult {
@@ -55,22 +57,14 @@ export interface Job {
   abortController?: AbortController;
 }
 
-// In-memory job store
+// In-memory job store (replace with Redis/DB in production)
 const jobs = new Map<string, Job>();
 
-// Generate a unique job ID
-export function generateJobId(): string {
-  const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substring(2, 8);
-  return `${timestamp}-${random}`;
-}
-
-// Create a new job
 export function createJob(
+  id: string,
   framework: FrameworkDetectionResult,
   fileCount: number
 ): Job {
-  const id = generateJobId();
   const job: Job = {
     id,
     status: "pending",
@@ -78,196 +72,116 @@ export function createJob(
     framework,
     fileCount,
     logs: [],
-    progress: { current: 0, total: 100, stage: "Initializing" },
+    progress: { current: 0, total: 100, stage: "Queued" },
     subscribers: new Set(),
+    abortController: new AbortController(),
   };
+
   jobs.set(id, job);
   return job;
 }
 
-// Get a job by ID
 export function getJob(id: string): Job | undefined {
   return jobs.get(id);
 }
 
-// Subscribe to job events
-export function subscribeToJob(
-  id: string,
-  callback: (event: JobEvent) => void
-): () => void {
-  const job = jobs.get(id);
-  if (!job) {
-    throw new Error(`Job ${id} not found`);
-  }
-  
-  job.subscribers.add(callback);
-  
-  // Return unsubscribe function
-  return () => {
-    job.subscribers.delete(callback);
-  };
-}
-
-// Emit an event to all subscribers
-function emitEvent(job: Job, event: JobEvent): void {
-  job.subscribers.forEach((callback) => {
-    try {
-      callback(event);
-    } catch (error) {
-      console.error("Error in job subscriber:", error);
-    }
-  });
-}
-
-// Add a log entry
-export function addLog(
-  id: string,
-  level: LogEntry["level"],
-  message: string
-): void {
-  const job = jobs.get(id);
-  if (!job) return;
-
-  const log: LogEntry = {
-    timestamp: Date.now(),
-    level,
-    message,
-  };
-  job.logs.push(log);
-
-  emitEvent(job, {
-    type: "log",
-    timestamp: Date.now(),
-    data: log,
-  });
-}
-
-// Update progress
-export function updateProgress(
-  id: string,
-  current: number,
-  total: number,
-  stage: string
-): void {
-  const job = jobs.get(id);
-  if (!job) return;
-
-  job.progress = { current, total, stage };
-
-  emitEvent(job, {
-    type: "progress",
-    timestamp: Date.now(),
-    data: job.progress,
-  });
-}
-
-// Update job status
-export function updateStatus(id: string, status: JobStatus): void {
+export function updateJobStatus(id: string, status: JobStatus, error?: string) {
   const job = jobs.get(id);
   if (!job) return;
 
   job.status = status;
-  
   if (status === "running" && !job.startedAt) {
     job.startedAt = Date.now();
   }
-  if (status === "completed" || status === "failed" || status === "cancelled") {
+  if ((status === "completed" || status === "failed" || status === "cancelled") && !job.completedAt) {
     job.completedAt = Date.now();
+    // Clear subscribers to avoid leaks, but maybe wait a bit?
+    // In SSE, we want to send the final event first.
+  }
+  
+  if (error) {
+    job.error = error;
   }
 
-  emitEvent(job, {
-    type: "status",
-    timestamp: Date.now(),
-    data: status,
-  });
+  emitEvent(job, "status", { status, error });
 }
 
-// Set abort controller for a job
-export function setAbortController(id: string, controller: AbortController): void {
+export function updateJobProgress(id: string, current: number, total: number, stage: string) {
   const job = jobs.get(id);
   if (!job) return;
-  job.abortController = controller;
+
+  job.progress = { current, total, stage };
+  emitEvent(job, "progress", job.progress);
 }
 
-// Cancel a running job
-export function cancelJob(id: string): boolean {
+export function addJobLog(id: string, message: string, level: "info" | "error" | "warning" = "info") {
   const job = jobs.get(id);
-  if (!job) return false;
-  
-  if (job.status !== "running" && job.status !== "pending") {
-    return false;
-  }
+  if (!job) return;
 
-  // Abort the controller if it exists
-  if (job.abortController) {
-    job.abortController.abort();
-  }
-
-  job.status = "cancelled";
-  job.completedAt = Date.now();
-
-  addLog(id, "warn", "🛑 Analysis cancelled by user");
-
-  emitEvent(job, {
-    type: "status",
+  const entry: LogEntry = {
     timestamp: Date.now(),
-    data: "cancelled",
-  });
+    message,
+    level,
+  };
 
-  return true;
+  job.logs.push(entry);
+  emitEvent(job, "log", entry);
 }
 
-// Check if job is cancelled
-export function isJobCancelled(id: string): boolean {
-  const job = jobs.get(id);
-  return job?.status === "cancelled" || job?.abortController?.signal.aborted === true;
-}
-
-// Set job result
-export function setResult(id: string, result: AnalysisResult): void {
+export function setJobResult(id: string, result: AnalysisResult) {
   const job = jobs.get(id);
   if (!job) return;
 
   job.result = result;
-
-  emitEvent(job, {
-    type: "result",
-    timestamp: Date.now(),
-    data: result,
-  });
+  updateJobStatus(id, "completed");
+  emitEvent(job, "result", result);
 }
 
-// Set job error
-export function setError(id: string, error: string): void {
+export function subscribeToJob(id: string, callback: (event: JobEvent) => void): () => void {
   const job = jobs.get(id);
-  if (!job) return;
+  if (!job) return () => {};
 
-  job.error = error;
-  job.status = "failed";
-  job.completedAt = Date.now();
-
-  emitEvent(job, {
-    type: "error",
-    timestamp: Date.now(),
-    data: error,
-  });
+  job.subscribers.add(callback);
+  return () => job.subscribers.delete(callback);
 }
 
-// Clean up old jobs (call periodically)
-export function cleanupOldJobs(maxAgeMs: number = 30 * 60 * 1000): void {
-  const now = Date.now();
-  for (const [id, job] of jobs) {
-    if (now - job.createdAt > maxAgeMs && job.subscribers.size === 0) {
-      jobs.delete(id);
+function emitEvent(job: Job, type: JobEvent["type"], data: unknown) {
+  const event: JobEvent = {
+    type,
+    timestamp: Date.now(),
+    data,
+  };
+
+  for (const subscriber of job.subscribers) {
+    // subscriber(event);
+    // Wrap in try-catch to prevent one subscriber from crashing the loop
+    try {
+        subscriber(event);
+    } catch(e) {
+        console.error("Error in job subscriber:", e);
     }
   }
 }
 
-// Get job for serialization (without subscribers)
-export function getJobData(id: string): Omit<Job, "subscribers"> | undefined {
-  const job = jobs.get(id);
-  if (!job) return undefined;
-
-  const { subscribers, ...jobData } = job;
-  return jobData;
+export function cancelJob(id: string) {
+    const job = jobs.get(id);
+    if (!job) return;
+    
+    if (job.abortController) {
+        job.abortController.abort();
+    }
+    updateJobStatus(id, "cancelled");
 }
+
+
+// Cleanup old jobs periodically
+setInterval(() => {
+  const now = Date.now();
+  const ONE_HOUR = 60 * 60 * 1000;
+  
+  for (const [id, job] of jobs.entries()) {
+    if (job.completedAt && (now - job.completedAt > ONE_HOUR)) {
+      jobs.delete(id);
+    }
+  }
+}, 60 * 60 * 1000); // Run every hour

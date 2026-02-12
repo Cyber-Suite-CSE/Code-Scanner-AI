@@ -1,42 +1,55 @@
 services:
-  # API Service
-  api:
+  api-gateway:
     build:
-      context: .
-      dockerfile: Dockerfile.api
-      args:
-        - DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-4.1-nano-2025-04-14}
-        - NEXT_PUBLIC_FRONTEND_URL=${NEXT_PUBLIC_FRONTEND_URL:-http://localhost:3000}
+      context: ../Cyber-Suite-API-Gateway
+      dockerfile: Dockerfile
+    container_name: cyber-suite-api-gateway
+    restart: unless-stopped
     ports:
       - "3001:3000"
-    environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-4.1-nano-2025-04-14}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-    restart: unless-stopped
+    env_file:
+      - ./env/api-gateway/.env
     networks:
-      - app-network
+      - cyber-net
 
-  # Frontend Service
-  frontend:
+  dashboard:
     build:
-      context: .
-      dockerfile: Dockerfile.frontend
-      args:
-        - NEXT_PUBLIC_API_URL=http://localhost:3001
+      context: ../Cyber-Suite-Dashboard
+      dockerfile: Dockerfile.dev
+    container_name: cyber-suite-dashboard
+    restart: unless-stopped
     ports:
       - "3000:3000"
-    environment:
-      - NODE_ENV=production
-      - PORT=3000
+    env_file:
+      - ./env/dashboard/.env
+    volumes:
+      - ../Cyber-Suite-Dashboard:/app
+      - /app/node_modules
     depends_on:
-      - api
-    restart: unless-stopped
+      - api-gateway
     networks:
-      - app-network
+      - cyber-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+
+  code-scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: code-scanner-ai
+    restart: unless-stopped
+    ports:
+      - "8005:8005"
+    env_file:
+      - ./env/code-scanner-ai/.env
+    networks:
+      - cyber-net
 
 networks:
-  app-network:
+  cyber-net:
     driver: bridge
