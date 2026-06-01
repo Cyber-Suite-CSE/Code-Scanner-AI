@@ -5,6 +5,8 @@ import dotenv from "dotenv";
 // Load environment variables
 dotenv.config();
 
+const startTime = Date.now();
+
 import analyzeRoutes from "./routes/analyze";
 import fetchRepoRoutes from "./routes/fetch-repo";
 import uploadZipRoutes from "./routes/upload-zip";
@@ -31,6 +33,30 @@ app.use("/api/jobs", jobRoutes);
 // Health check
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", service: "code-scanner-ai" });
+});
+
+// Prometheus Metrics
+app.get('/metrics', (req, res) => {
+  const memoryUsage = process.memoryUsage();
+  const uptime = (Date.now() - startTime) / 1000;
+  const cpuUsage = process.cpuUsage();
+  
+  res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+  res.end(`# HELP process_uptime_seconds Uptime of the process in seconds
+# TYPE process_uptime_seconds gauge
+process_uptime_seconds ${uptime}
+# HELP process_memory_bytes Memory usage in bytes
+# TYPE process_memory_bytes gauge
+process_memory_bytes{type="rss"} ${memoryUsage.rss}
+process_memory_bytes{type="heapTotal"} ${memoryUsage.heapTotal}
+process_memory_bytes{type="heapUsed"} ${memoryUsage.heapUsed}
+# HELP process_cpu_user_seconds CPU user time in seconds
+# TYPE process_cpu_user_seconds counter
+process_cpu_user_seconds ${cpuUsage.user / 1000000}
+# HELP process_cpu_system_seconds CPU system time in seconds
+# TYPE process_cpu_system_seconds counter
+process_cpu_system_seconds ${cpuUsage.system / 1000000}
+`);
 });
 
 // Error handling middleware
