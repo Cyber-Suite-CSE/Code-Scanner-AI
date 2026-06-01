@@ -429,3 +429,16 @@ Contributions are welcome! Please open an issue or submit a pull request on [Git
 3. Commit your changes (`git commit -m 'Add some amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
+
+## Monitoring & CI/CD
+
+### Prometheus Monitoring
+This service exposes a native, lightweight `/metrics` endpoint returning Prometheus-formatted telemetry (such as uptime, memory, and CPU usage).
+- **Metrics Endpoint:** `/metrics`
+- **Scraping Config:** Configured with annotations `prometheus.io/scrape: "true"` in the deployment manifest.
+
+### CI/CD Pipeline
+GitHub Actions workflow is located at `.github/workflows/deploy.yml` which triggers on push to `main` branch:
+- **Build Optimization:** Uses `docker/setup-buildx-action@v3` with layer caching enabled (`cache-from: type=gha`, `cache-to: type=gha,mode=max`).
+- **Target Registry:** `csecyber/code-scanner-ai`
+- **Tags Generated:** Dual tags for `:latest` and the unique commit hash `:${ github.sha }`.
